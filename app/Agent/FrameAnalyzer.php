@@ -310,7 +310,9 @@ class FrameAnalyzer
     }
 
     /**
-     * Mirror the Worker's failure path: a failed frame run (with the audit input) and one more processed frame.
+     * Mirror the Worker's failure path (worker/index.ts:350-377): a failed frame run with the audit input and one more
+     * processed frame. Like the web, model calls and searches are recorded as 0 even when requests were already sent,
+     * and events, raw responses and usage are left empty.
      */
     private function recordFailure(AnalysisFailed $failure, string $frameRunId, string $scanSessionId, CarbonImmutable $capturedAt, string $findCriteria, int $started, Deadline $deadline): void
     {

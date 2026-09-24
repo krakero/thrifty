@@ -729,3 +729,32 @@ it('matches the web app instructions and input text byte for byte', function () 
         ->and(FrameAgent::buildInputText('X'))->toBe(FrameAgent::AgentInputText."\n\nOnly return finds that match this user-supplied selection criteria:\n<find_criteria>\nX\n</find_criteria>")
         ->and(FrameAgent::buildInputText(' '))->toContain("<find_criteria>\n \n</find_criteria>");
 });
+
+it('records zero model calls and searches on failure like the web, even after completed turns', function () {
+    agentFrame();
+    fakeOpenAi([
+        agentResponse('resp_1', [
+            ['type' => 'web_search_call', 'id' => 'ws_1', 'status' => 'completed', 'action' => ['type' => 'search', 'query' => 'walkman']],
+            agentFunctionCall('check_previous_scans', ['candidates' => [agentCandidate()]], 'call_1'),
+        ]),
+        ['httpStatus' => 401, 'httpBody' => ['error' => ['message' => 'Incorrect API key provided']]],
+    ]);
+
+    expect(fn () => analyze($this->session->id))->toThrow(AnalysisFailed::class, 'OpenAI rejected your API key. Check it in Settings.');
+
+    expect(openAiRequests())->toHaveCount(2);
+    expect(FrameRun::sole())
+        ->status->toBe(FrameRunStatus::Failed)
+        ->item_count->toBe(0)
+        ->model_calls->toBe(0)
+        ->searches_performed->toBe(0)
+        ->events_json->toBe([])
+        ->raw_responses_json->toBe([])
+        ->output_json->toBeNull()
+        ->usage_json->toBeNull();
+    expect(AppStat::current())
+        ->frames_processed->toBe(1)
+        ->items_identified->toBe(0)
+        ->searches_performed->toBe(0)
+        ->model_calls->toBe(0);
+});

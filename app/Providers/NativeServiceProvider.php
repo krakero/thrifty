@@ -4,7 +4,9 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Native\Mobile\Providers\BrowserServiceProvider;
+use Native\Mobile\Providers\CameraServiceProvider;
 use Native\Mobile\UI\NativeUIServiceProvider;
+use Thrifty\Camera\ThriftyCameraServiceProvider;
 
 class NativeServiceProvider extends ServiceProvider
 {
@@ -38,6 +40,9 @@ class NativeServiceProvider extends ServiceProvider
         return [
             NativeUIServiceProvider::class,
             BrowserServiceProvider::class,
+            ThriftyCameraServiceProvider::class,
+            CameraServiceProvider::class,
+
         ];
     }
 }

@@ -1,0 +1,29 @@
+{
+    "name": "thrifty/camera",
+    "description": "Thrifty's iOS camera plugin: live scanning preview, snapshots, video frame extraction, find chime and share cards.",
+    "type": "nativephp-plugin",
+    "license": "MIT",
+    "version": "1.0.0",
+    "require": {
+        "php": "^8.3",
+        "nativephp/mobile": "^4.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Thrifty\\Camera\\": "src/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Thrifty\\Camera\\ThriftyCameraServiceProvider"
+            ],
+            "aliases": {
+                "ThriftyCamera": "Thrifty\\Camera\\Facades\\ThriftyCamera"
+            }
+        },
+        "nativephp": {
+            "manifest": "nativephp.json"
+        }
+    }
+}

@@ -1,0 +1,59 @@
+{
+    "namespace": "ThriftyCamera",
+    "platforms": [
+        "ios"
+    ],
+    "components": [
+        {
+            "type": "thrifty_camera",
+            "element": "Thrifty\\Camera\\Elements\\ThriftyCameraView",
+            "blade": "Thrifty\\Camera\\Components\\ThriftyCameraView",
+            "ios_renderer": "ThriftyCameraRenderer",
+            "self_closing": true
+        }
+    ],
+    "bridge_functions": [
+        {
+            "name": "ThriftyCamera.Snapshot",
+            "ios": "ThriftyCameraFunctions.Snapshot",
+            "description": "Capture the current live preview frame into a directory (async, emits FrameCaptured)"
+        },
+        {
+            "name": "ThriftyCamera.ExtractVideoFrames",
+            "ios": "ThriftyCameraFunctions.ExtractVideoFrames",
+            "description": "Sample a video every N seconds into JPEG frames (async, emits FrameCaptured per frame then VideoFramesExtracted)"
+        },
+        {
+            "name": "ThriftyCamera.Chime",
+            "ios": "ThriftyCameraFunctions.Chime",
+            "description": "Play the find chime and a success haptic"
+        },
+        {
+            "name": "ThriftyCamera.ShareFindCard",
+            "ios": "ThriftyCameraFunctions.ShareFindCard",
+            "description": "Render a find card image and open the iOS share sheet"
+        }
+    ],
+    "android": {
+        "permissions": [],
+        "dependencies": {
+            "implementation": []
+        }
+    },
+    "ios": {
+        "min_version": "18.2",
+        "info_plist": {
+            "NSCameraUsageDescription": "Thrifty uses the camera to spot items worth reselling while you browse.",
+            "NSPhotoLibraryAddUsageDescription": "Thrifty can save find cards you share to your photo library."
+        },
+        "dependencies": {
+            "swift_packages": [],
+            "pods": []
+        }
+    },
+    "events": [
+        "Thrifty\\Camera\\Events\\FrameCaptured",
+        "Thrifty\\Camera\\Events\\VideoFramesExtracted",
+        "Thrifty\\Camera\\Events\\CameraFailed"
+    ]
+}

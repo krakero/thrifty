@@ -3,8 +3,6 @@
 namespace App\NativeComponents;
 
 use App\Actions\DeleteItems;
-use App\Icons\Android;
-use App\Icons\Ios;
 use App\Models\Item;
 use App\Models\ValuationSource;
 use App\NativeComponents\Layouts\TabsLayout;
@@ -16,8 +14,6 @@ use Closure;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
-use Native\Mobile\Edge\Layouts\Builders\NavAction;
-use Native\Mobile\Edge\Layouts\Builders\NavBarOptions;
 use Native\Mobile\Edge\NativeComponent;
 use Native\Mobile\Events\Alert\ButtonPressed;
 use Native\Mobile\Facades\Browser;
@@ -26,6 +22,9 @@ use Thrifty\Camera\Facades\ThriftyCamera;
 
 /**
  * One find: the annotated frame it was seen in, its valuation and the evidence behind it.
+ *
+ * Share and Delete sit in the screen, not the nav bar: the vendor's tab toolbar draws each action as a bare SF Symbol
+ * button that ignores `a11yLabel()` (VoiceOver reads "Trash") and is smaller than 44pt.
  *
  * The web app's "Search full frame with Google Lens" link is deliberately not ported: Lens needs a public image URL, and
  * frames never leave the device.
@@ -76,17 +75,6 @@ class ItemDetail extends NativeComponent
     public function navTitle(): string
     {
         return 'Find';
-    }
-
-    public function navigationOptions(): ?NavBarOptions
-    {
-        if ($this->item() === null) {
-            return null;
-        }
-
-        return NavBarOptions::make()
-            ->action(NavAction::make('share')->icon(ios: Ios::SquareAndArrowUp, android: Android::Share)->a11yLabel('Share find as image')->press('share'))
-            ->action(NavAction::make('delete')->icon(ios: Ios::Trash, android: Android::Delete)->a11yLabel('Delete find')->destructive()->press('confirmDelete'));
     }
 
     /**

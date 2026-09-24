@@ -216,7 +216,7 @@ it('shares the find as an image card with every box, the facts and the top compa
     }
 
     itemDetail($lamp)
-        ->press('share')
+        ->tap('share-find')
         ->assertNativeCalled('ThriftyCamera.ShareFindCard', function (array $card) use ($lamp) {
             $labels = array_column($card['rows'], 'value', 'label');
 
@@ -244,7 +244,7 @@ it('shares without boxes when only the thumbnail is left', function () {
     $item = Item::factory()->create(['thumbnail_path' => 'thumbs/x.jpg']);
 
     itemDetail($item)
-        ->press('share')
+        ->tap('share-find')
         ->assertNativeCalled('ThriftyCamera.ShareFindCard', fn (array $card) => $card['box'] === null
             && $card['boxes'] === []
             && str_ends_with($card['imagePath'], 'thumbs/x.jpg'));
@@ -254,13 +254,13 @@ it('deletes the find after confirmation and goes back', function () {
     [, $lamp, $chair] = frameWithTwoFinds();
 
     $screen = itemDetail($lamp)
-        ->press('confirmDelete')
+        ->tap('delete-find')
         ->assertNativeCalled('Dialog.Alert', fn (array $params) => $params['title'] === 'Delete this find?');
 
     $screen->emitNative(ButtonPressed::class, ['index' => 0, 'label' => 'Cancel', 'id' => "delete-find-{$lamp->id}"]);
     expect(Item::find($lamp->id))->not->toBeNull();
 
-    $screen->press('confirmDelete')
+    $screen->tap('delete-find')
         ->emitNative(ButtonPressed::class, ['index' => 1, 'label' => 'Delete', 'id' => "delete-find-{$lamp->id}"])
         ->assertWentBack();
 
@@ -379,4 +379,18 @@ it('keeps the frame chips in a fixed order, opened find first, when another find
 
     $screen->tap("frame-item-{$lamp->id}")->assertSet('itemId', $lamp->id);
     expect($chipOrder($screen))->toBe([$chair->id, $third->id, $lamp->id]);
+});
+
+it('offers Share and Delete as labelled 44pt buttons in the screen instead of unlabelled nav-bar icons', function () {
+    [, $lamp] = frameWithTwoFinds();
+
+    $screen = itemDetail($lamp);
+
+    foreach (['share-find' => 'Share find as image', 'delete-find' => 'Delete find'] as $ref => $label) {
+        $screen->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === $ref
+            && ($node['props']['a11y_label'] ?? null) === $label
+            && ($node['layout']['min_height'] ?? 0) >= 44);
+    }
+
+    expect(json_encode($screen->tree()))->not->toContain('top_bar_action');
 });

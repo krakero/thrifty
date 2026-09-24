@@ -4,6 +4,8 @@ namespace App\NativeComponents\Layouts;
 
 use App\Icons\Android;
 use App\Icons\Ios;
+use App\NativeComponents\History;
+use App\NativeComponents\Scan;
 use Native\Mobile\Edge\Layouts\Builders\NavBar;
 use Native\Mobile\Edge\Layouts\Builders\Tab;
 use Native\Mobile\Edge\Layouts\Builders\TabBar;
@@ -40,10 +42,24 @@ class TabsLayout extends NativeLayout
     public function navBar(NativeComponent $screen): ?NavBar
     {
         return NavBar::make()
-            ->title($screen->navTitle() !== '' ? $screen->navTitle() : 'Thrifty')
+            ->title($this->titleFor($screen))
             ->backgroundColor('#141210')
             ->textColor('#F5EFE6')
             ->displayMode('inline');
+    }
+
+    /**
+     * The tab roots hide their bar but still need a title: it keeps the tab's stack alive and is what the Back button
+     * on a pushed screen reads ("History", not "Thrifty").
+     */
+    private function titleFor(NativeComponent $screen): string
+    {
+        return match (true) {
+            $screen->navTitle() !== '' => $screen->navTitle(),
+            $screen instanceof Scan => 'Scan',
+            $screen instanceof History => 'History',
+            default => 'Thrifty',
+        };
     }
 
     /**

@@ -24,6 +24,21 @@
         <column class="w-full gap-5 px-4 pt-2 pb-10">
             @include('native.partials.annotated-frame', ['items' => $frameItems, 'activeItemId' => $item->id, 'frame' => $frame])
 
+            <row class="w-full gap-3">
+                <thrifty-pressable ref="share-find" @press="share" a11y-label="Share find as image" class="flex-1 min-h-[44] justify-center rounded-full bg-theme-surface border border-theme-outline px-4">
+                    <row class="w-full items-center justify-center gap-2">
+                        <icon :ios="Ios::SquareAndArrowUp" :android="Android::Share" :size="16" class="text-theme-on-surface" />
+                        <text font="semibold" class="text-sm text-theme-on-surface">Share</text>
+                    </row>
+                </thrifty-pressable>
+                <thrifty-pressable ref="delete-find" @press="confirmDelete" a11y-label="Delete find" a11y-hint="Asks before deleting" class="flex-1 min-h-[44] justify-center rounded-full bg-theme-destructive/15 border border-theme-destructive/40 px-4">
+                    <row class="w-full items-center justify-center gap-2">
+                        <icon :ios="Ios::Trash" :android="Android::Delete" :size="16" class="text-theme-destructive" />
+                        <text font="semibold" class="text-sm text-theme-destructive">Delete</text>
+                    </row>
+                </thrifty-pressable>
+            </row>
+
             @if ($error !== null)
                 <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 p-3">
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />

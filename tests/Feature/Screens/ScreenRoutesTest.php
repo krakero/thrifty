@@ -99,3 +99,7 @@ it('opens settings inside the History tab and comes back to the same screen', fu
 
     expect($settings->goBack()->instance())->toBe($instance);
 });
+
+it('titles the hidden tab roots so Back on a pushed screen reads the tab name', function (string $uri, string $title) {
+    expect(tabsRootProps(Native::visit($uri)->tree())['nav_title'] ?? null)->toBe($title);
+})->with([['/scan', 'Scan'], ['/history', 'History']]);

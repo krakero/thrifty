@@ -213,3 +213,30 @@ it('reads each card to VoiceOver as its name and spoken resale range', function 
         ->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === "item-card-{$pending->id}"
             && ($node['props']['a11y_label'] ?? null) === 'Vinyl records lot, resale value pending');
 });
+
+it('keys the list by the search, so a new query starts at the top while Back and refresh keep the offset', function () {
+    $listKey = function ($screen): ?int {
+        $find = function (array $node) use (&$find): ?int {
+            if ($node['type'] === 'refreshable') {
+                return $node['id'];
+            }
+            foreach ($node['children'] ?? [] as $child) {
+                if (($id = $find($child)) !== null) {
+                    return $id;
+                }
+            }
+
+            return null;
+        };
+
+        return $find($screen->tree());
+    };
+
+    $screen = Native::test(History::class);
+    $unfiltered = $listKey($screen);
+
+    expect($listKey($screen->call('refresh')))->toBe($unfiltered)
+        ->and($listKey($screen->set('search', 'lamp')))->not->toBe($unfiltered)
+        ->and($listKey($screen->set('search', ' lamp ')))->toBe($listKey($screen->set('search', 'lamp')))
+        ->and($listKey($screen->set('search', '')))->toBe($unfiltered);
+});

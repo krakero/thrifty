@@ -43,7 +43,7 @@
         </row>
     </column>
 
-    <refreshable native:key="history-list" @refresh="refresh" class="w-full flex-1 bg-theme-background">
+    <refreshable native:key="history-list-{{ md5(trim($search)) }}" @refresh="refresh" class="w-full flex-1 bg-theme-background">
         <column class="w-full gap-4 px-4 pt-1 pb-8">
             <row
                 ref="history-stats"

@@ -1,3 +1,166 @@
-<column class="w-full h-full items-center justify-center gap-4">
-    <text class="text-2xl font-extrabold text-zinc-900 text-center">Settings</text>
-</column>
+@use('App\Icons\Ios')
+@use('App\Icons\Android')
+@use('App\Support\Money')
+
+<scroll-view class="w-full h-full bg-theme-background">
+    <column class="w-full gap-6 px-4 pt-4 pb-10">
+        @if ($error)
+            <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 px-3 py-2">
+                <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Error" :size="16" class="text-theme-destructive" />
+                <text class="flex-1 text-sm text-theme-on-surface">{{ $error }}</text>
+                <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="p-1">
+                    <icon :ios="Ios::Xmark" :android="Android::Close" :size="16" class="text-theme-on-surface" />
+                </pressable>
+            </row>
+        @endif
+
+        {{-- Find criteria --}}
+        <column class="w-full gap-3">
+            <text font="display" class="text-lg text-theme-on-background">Find criteria</text>
+            <outlined-text-input
+                ref="find-criteria"
+                native:model.debounce.400ms="findCriteria"
+                placeholder="Vintage band tees worth more than $40"
+                :multiline="true"
+                :min-lines="3"
+                :max-lines="6"
+                :max-length="1000"
+                a11y-label="Find criteria"
+                class="w-full"
+            />
+            <row class="w-full gap-2 flex-wrap">
+                @foreach ($presets as $index => $preset)
+                    <chip
+                        ref="preset-{{ $index }}"
+                        label="{{ $preset['label'] }}"
+                        :selected="$findCriteria === $preset['value']"
+                        @change="applyPreset({{ $index }})"
+                    />
+                @endforeach
+                @if ($findCriteria !== '')
+                    <chip ref="clear-criteria" label="Clear" :selected="false" @change="clearFindCriteria" />
+                @endif
+            </row>
+        </column>
+
+        {{-- Concurrent processing --}}
+        <column class="w-full gap-2">
+            <row class="w-full items-center">
+                <text font="semibold" class="flex-1 text-base text-theme-on-background">Concurrent processing</text>
+                <text font="mono" class="text-base text-theme-primary">{{ $maxConcurrentFrames }}</text>
+            </row>
+            <slider
+                ref="concurrent-processing"
+                native:model="maxConcurrentFrames"
+                :min="1"
+                :max="$maxConcurrentLimit"
+                :step="1"
+                a11y-label="Concurrent processing"
+                class="w-full"
+            />
+            <row class="w-full">
+                <text font="mono" class="flex-1 text-xs text-theme-on-surface-variant">1</text>
+                <text font="mono" class="text-xs text-theme-on-surface-variant">{{ $maxConcurrentLimit }}</text>
+            </row>
+        </column>
+
+        {{-- Scan frequency --}}
+        <column class="w-full gap-2">
+            <row class="w-full items-center">
+                <text font="semibold" class="flex-1 text-base text-theme-on-background">Live scan frequency</text>
+                <text font="mono" class="text-base text-theme-primary">{{ $scanIntervalSeconds }}s</text>
+            </row>
+            <slider
+                ref="scan-frequency"
+                native:model="scanIntervalSeconds"
+                :min="1"
+                :max="30"
+                :step="1"
+                a11y-label="Live scan frequency"
+                class="w-full"
+            />
+            <row class="w-full">
+                <text font="mono" class="flex-1 text-xs text-theme-on-surface-variant">1s</text>
+                <text font="mono" class="text-xs text-theme-on-surface-variant">30s</text>
+            </row>
+        </column>
+
+        {{-- API keys --}}
+        <column class="w-full gap-3">
+            <text font="display" class="text-lg text-theme-on-background">API keys</text>
+            <outlined-text-input
+                ref="openai-key"
+                native:model.blur="openAiApiKey"
+                label="OpenAI API key"
+                placeholder="sk-..."
+                :secure="true"
+                supporting="Stored encrypted on this device. Frames go straight from your phone to OpenAI."
+                a11y-label="OpenAI API key"
+                class="w-full"
+            />
+            <pressable ref="get-api-key" @press="openApiKeyPage" a11y-label="Get an OpenAI API key" class="self-start">
+                <row class="items-center gap-1">
+                    <text font="semibold" class="text-sm text-theme-primary">Get an API key</text>
+                    <icon :ios="Ios::ArrowUpRight" :android="Android::OpenInNew" :size="12" class="text-theme-primary" />
+                </row>
+            </pressable>
+
+            <text class="text-sm text-theme-on-surface-variant mt-2">eBay (optional). Add a client ID and secret to compare against active eBay listings.</text>
+            <outlined-text-input
+                ref="ebay-client-id"
+                native:model.blur="ebayClientId"
+                label="eBay client ID"
+                a11y-label="eBay client ID"
+                class="w-full"
+            />
+            <outlined-text-input
+                ref="ebay-client-secret"
+                native:model.blur="ebayClientSecret"
+                label="eBay client secret"
+                :secure="true"
+                a11y-label="eBay client secret"
+                class="w-full"
+            />
+        </column>
+
+        {{-- Saved finds --}}
+        <column class="w-full gap-3">
+            <text class="text-xs uppercase text-theme-on-surface-variant">Saved inventory</text>
+            <text font="display" class="text-lg text-theme-on-background">Saved finds</text>
+
+            @forelse ($savedFinds as $item)
+                <row class="w-full items-center gap-3 rounded-xl bg-theme-surface border border-theme-outline p-2">
+                    <image src="{{ $item->thumbnailFile() }}" :fit="2" class="w-[48] h-[48] rounded-lg bg-theme-surface-variant" />
+                    <column class="flex-1 gap-1">
+                        <text font="semibold" class="text-sm text-theme-on-surface" :max-lines="1">{{ $item->name }}</text>
+                        <text font="mono" class="text-sm text-theme-accent">{{ Money::resaleRange($item) }}</text>
+                    </column>
+                    <pressable
+                        ref="delete-{{ $item->id }}"
+                        @press="deleteFind('{{ $item->id }}')"
+                        a11y-label="Delete {{ $item->name }}"
+                        class="w-[40] h-[40] items-center justify-center rounded-full"
+                    >
+                        <icon :ios="Ios::Trash" :android="Android::DeleteOutline" :size="18" class="text-theme-destructive" />
+                    </pressable>
+                </row>
+            @empty
+                <text class="text-sm text-theme-on-surface-variant">No saved finds.</text>
+            @endforelse
+
+            @if ($hasMoreFinds)
+                <button ref="load-more" variant="secondary" label="Load more finds" @press="loadMoreFinds" class="w-full" />
+            @endif
+
+            <button
+                ref="delete-all"
+                variant="destructive"
+                label="Delete all finds"
+                :disabled="$savedFinds->isEmpty()"
+                @press="confirmDeleteAll"
+                class="w-full mt-2"
+            />
+            <text class="text-xs text-theme-on-surface-variant text-center">Processing stats are kept.</text>
+        </column>
+    </column>
+</scroll-view>

@@ -14,13 +14,13 @@ beforeEach(function () {
 it('loads saved settings', function () {
     $settings = app(AppSettings::class);
     $settings->set(AppSettings::FindCriteria, 'Cast iron');
-    $settings->set(AppSettings::MaxConcurrentFrames, '7');
+    $settings->set(AppSettings::MaxConcurrentFrames, '3');
     $settings->set(AppSettings::ScanIntervalSeconds, '12');
     $settings->set(AppSettings::OpenAiApiKey, 'sk-test');
 
     Native::test(Settings::class)
         ->assertSet('findCriteria', 'Cast iron')
-        ->assertSet('maxConcurrentFrames', 7)
+        ->assertSet('maxConcurrentFrames', 3)
         ->assertSet('scanIntervalSeconds', 12)
         ->assertSet('openAiApiKey', 'sk-test')
         ->assertSee('Concurrent processing')
@@ -49,12 +49,12 @@ it('applies and clears presets', function () {
 
 it('persists and clamps the sliders', function () {
     Native::test(Settings::class)
-        ->slide('concurrent-processing', 9)
-        ->assertSet('maxConcurrentFrames', 9)
+        ->slide('concurrent-processing', 3)
+        ->assertSet('maxConcurrentFrames', 3)
         ->slide('scan-frequency', 45)
         ->assertSet('scanIntervalSeconds', 30);
 
-    expect(app(AppSettings::class)->maxConcurrentFrames())->toBe(9)
+    expect(app(AppSettings::class)->maxConcurrentFrames())->toBe(3)
         ->and(app(AppSettings::class)->scanIntervalSeconds())->toBe(30);
 });
 
@@ -124,4 +124,21 @@ it('is accessible', function () {
 
 it('is routed under the stack layout', function () {
     Native::visit('/settings')->assertScreen(Settings::class)->assertNavTitle('Settings');
+});
+
+it('keeps typed api keys when leaving without blurring', function () {
+    $component = Native::test(Settings::class)
+        ->input('openai-key', 'sk-typed')
+        ->assertSet('openAiApiKey', 'sk-typed');
+
+    expect(app(AppSettings::class)->openAiApiKey())->toBe('sk-typed');
+
+    $component->instance()->openAiApiKey = 'sk-unsynced ';
+    $component->instance()->unmount();
+
+    expect(app(AppSettings::class)->openAiApiKey())->toBe('sk-unsynced');
+});
+
+it('explains the parallel analysis limit', function () {
+    Native::test(Settings::class)->assertSee('runs at most '.AppSettings::MaxConcurrentFramesLimit.' analyses in parallel');
 });

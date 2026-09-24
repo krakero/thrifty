@@ -57,6 +57,20 @@ class Settings extends NativeComponent
         $this->ebayClientSecret = (string) $settings->get(AppSettings::EbayClientSecret, '');
     }
 
+    /**
+     * Backstop for Back: persist the fields as last synced, whether or not their change hooks ran.
+     */
+    public function unmount(): void
+    {
+        $settings = app(AppSettings::class);
+        $settings->set(AppSettings::FindCriteria, $this->findCriteria);
+        $settings->set(AppSettings::OpenAiApiKey, trim($this->openAiApiKey));
+        $settings->set(AppSettings::EbayClientId, trim($this->ebayClientId));
+        $settings->set(AppSettings::EbayClientSecret, trim($this->ebayClientSecret));
+
+        parent::unmount();
+    }
+
     public function updatedFindCriteria(string $value): void
     {
         $this->updateFindCriteria($value);
@@ -90,20 +104,17 @@ class Settings extends NativeComponent
 
     public function updatedOpenAiApiKey(string $value): void
     {
-        $this->openAiApiKey = trim($value);
-        app(AppSettings::class)->set(AppSettings::OpenAiApiKey, $this->openAiApiKey);
+        app(AppSettings::class)->set(AppSettings::OpenAiApiKey, trim($value));
     }
 
     public function updatedEbayClientId(string $value): void
     {
-        $this->ebayClientId = trim($value);
-        app(AppSettings::class)->set(AppSettings::EbayClientId, $this->ebayClientId);
+        app(AppSettings::class)->set(AppSettings::EbayClientId, trim($value));
     }
 
     public function updatedEbayClientSecret(string $value): void
     {
-        $this->ebayClientSecret = trim($value);
-        app(AppSettings::class)->set(AppSettings::EbayClientSecret, $this->ebayClientSecret);
+        app(AppSettings::class)->set(AppSettings::EbayClientSecret, trim($value));
     }
 
     public function openApiKeyPage(): void

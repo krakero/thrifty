@@ -19,7 +19,7 @@
             <text font="display" class="text-lg text-theme-on-background">Find criteria</text>
             <outlined-text-input
                 ref="find-criteria"
-                native:model.debounce.400ms="findCriteria"
+                native:model="findCriteria"
                 placeholder="Vintage band tees worth more than $40"
                 :multiline="true"
                 :min-lines="3"
@@ -62,6 +62,7 @@
                 <text font="mono" class="flex-1 text-xs text-theme-on-surface-variant">1</text>
                 <text font="mono" class="text-xs text-theme-on-surface-variant">{{ $maxConcurrentLimit }}</text>
             </row>
+            <text class="text-xs text-theme-on-surface-variant">How many frames are analyzed at the same time. This phone runs at most {{ $maxConcurrentLimit }} analyses in parallel; frames captured while every slot is busy are skipped.</text>
         </column>
 
         {{-- Scan frequency --}}
@@ -90,7 +91,7 @@
             <text font="display" class="text-lg text-theme-on-background">API keys</text>
             <outlined-text-input
                 ref="openai-key"
-                native:model.blur="openAiApiKey"
+                native:model="openAiApiKey"
                 label="OpenAI API key"
                 placeholder="sk-..."
                 :secure="true"
@@ -108,14 +109,14 @@
             <text class="text-sm text-theme-on-surface-variant mt-2">eBay (optional). Add a client ID and secret to compare against active eBay listings.</text>
             <outlined-text-input
                 ref="ebay-client-id"
-                native:model.blur="ebayClientId"
+                native:model="ebayClientId"
                 label="eBay client ID"
                 a11y-label="eBay client ID"
                 class="w-full"
             />
             <outlined-text-input
                 ref="ebay-client-secret"
-                native:model.blur="ebayClientSecret"
+                native:model="ebayClientSecret"
                 label="eBay client secret"
                 :secure="true"
                 a11y-label="eBay client secret"

@@ -17,7 +17,9 @@
 <row native:key="scan-top-bar" class="w-full items-center gap-2 px-4 pt-3 pb-2">
     {{--
         thrifty-pressable puts the VoiceOver label and button trait on the menu itself (a theme button with :menu
-        leaves the menu unlabelled) and keeps the label light on the dark pill. 44pt tall.
+        leaves the menu unlabelled) and keeps the label light on the dark pill. 44pt tall, and capped in width (the
+        web's min(48vw, 300px)) with a one-line label, so at accessibility text sizes it truncates instead of pushing
+        the settings gear off screen.
     --}}
     <thrifty-pressable
         ref="camera-select"
@@ -30,7 +32,7 @@
             NavAction::divider(),
             $cameraChoice('camera-off', 'Camera off', LiveScanState::FacingOff, Ios::Xmark, Android::NoPhotography, 'turnCameraOff'),
         ]"
-        class="shrink-0 min-h-[44] justify-center rounded-full bg-theme-background/80 border border-theme-outline px-3"
+        class="max-w-[190] min-h-[44] justify-center rounded-full bg-theme-background/80 border border-theme-outline px-3"
     >
         <row class="items-center gap-1">
             <icon :ios="Ios::Camera" :android="Android::PhotoCamera" :size="14" class="text-theme-on-surface" />
@@ -42,12 +44,12 @@
     <spacer />
 
     @if ($state->scanning)
-        <row ref="live-state" class="h-[34] items-center gap-2 rounded-full bg-theme-accent px-3">
+        <row ref="live-state" class="min-h-[34] max-w-[120] items-center gap-2 rounded-full bg-theme-accent px-3">
             <column class="w-[7] h-[7] rounded-full bg-theme-on-accent" />
             <text font="semibold" :max-lines="1" class="text-xs text-theme-on-accent">Live</text>
         </row>
     @else
-        <row ref="live-state" class="h-[34] items-center gap-2 rounded-full bg-theme-background/60 px-3">
+        <row ref="live-state" class="min-h-[34] max-w-[120] items-center gap-2 rounded-full bg-theme-background/60 px-3">
             <column class="w-[7] h-[7] rounded-full bg-theme-on-surface-variant" />
             <text font="semibold" :max-lines="1" class="text-xs text-theme-on-surface-variant">{{ $cameraStarting ? 'Starting' : 'Paused' }}</text>
         </row>
@@ -61,6 +63,6 @@
         :android="Android::Settings"
         :size="20"
         a11y-label="Open settings"
-        class="text-theme-on-surface"
+        class="shrink-0 text-theme-on-surface"
     />
 </row>

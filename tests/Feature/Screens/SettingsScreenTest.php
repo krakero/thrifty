@@ -29,7 +29,7 @@ it('loads saved settings', function () {
 });
 
 it('persists find criteria, truncated to 1000 characters', function () {
-    Native::test(Settings::class)->set('findCriteria', str_repeat('a', 1200));
+    Native::test(Settings::class)->input('find-criteria', str_repeat('a', 1200));
 
     expect(app(AppSettings::class)->findCriteria())->toHaveLength(1000);
 });
@@ -60,9 +60,9 @@ it('persists and clamps the sliders', function () {
 
 it('persists api keys, trimmed', function () {
     Native::test(Settings::class)
-        ->set('openAiApiKey', '  sk-abc  ')
-        ->set('ebayClientId', 'client')
-        ->set('ebayClientSecret', 'secret');
+        ->input('openai-key', '  sk-abc  ')
+        ->input('ebay-client-id', 'client')
+        ->input('ebay-client-secret', 'secret');
 
     expect(app(AppSettings::class)->openAiApiKey())->toBe('sk-abc')
         ->and(app(AppSettings::class)->ebayCredentials())->toBe(['clientId' => 'client', 'clientSecret' => 'secret']);
@@ -171,8 +171,30 @@ it('ignores a second delete tap that lands on the next row', function () {
     expect(Item::count())->toBe(0);
 });
 
-it('debounces the text inputs', function () {
-    Native::test(Settings::class)->assertElement('outlined_text_input', fn (array $node) => ($node['props']['sync_mode'] ?? null) === 'debounce');
+it('syncs every keystroke without echoing values back into the fields', function () {
+    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-old');
+    $component = Native::test(Settings::class);
+    $field = fn (string $ref) => $component->assertElement('outlined_text_input', fn (array $node) => ($node['ref'] ?? null) === $ref
+        && ($node['props']['sync_mode'] ?? 'live') === 'live');
+
+    $field('openai-key');
+    $field('find-criteria');
+
+    $component->input('openai-key', 'sk-n')->input('openai-key', 'sk-ne')->input('find-criteria', 'Mid cen');
+
+    expect(app(AppSettings::class)->openAiApiKey())->toBe('sk-ne')
+        ->and(app(AppSettings::class)->findCriteria())->toBe('Mid cen');
+
+    $component->assertElement('outlined_text_input', fn (array $node) => ($node['ref'] ?? null) === 'openai-key' && $node['props']['value'] === 'sk-old')
+        ->assertElement('outlined_text_input', fn (array $node) => ($node['ref'] ?? null) === 'find-criteria' && $node['props']['value'] === '');
+});
+
+it('pushes a chosen preset into the criteria field by re-keying it', function () {
+    $component = Native::test(Settings::class)->input('find-criteria', 'typed')->tap('preset-1');
+
+    $component->assertElement('outlined_text_input', fn (array $node) => ($node['ref'] ?? null) === 'find-criteria'
+        && $node['props']['value'] === AppSettings::FindCriteriaPresets[1]['value']);
+    expect($component->get('criteriaRevision'))->toBe(1);
 });
 
 it('keeps the active preset selected when it is tapped again', function () {

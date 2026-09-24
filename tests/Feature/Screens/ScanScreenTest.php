@@ -1023,6 +1023,12 @@ it('labels the camera menu and the dock controls for VoiceOver', function () {
     $component->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === 'camera-select' && ($node['props']['has_menu'] ?? false));
 });
 
+it('caps the camera selector width so the settings gear stays on screen', function () {
+    Native::test(Scan::class)
+        ->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === 'camera-select'
+            && ($node['layout']['max_width'] ?? $node['layout']['maxWidth'] ?? null) == 190);
+});
+
 it('ignores results for analyses it is not waiting on', function () {
     Native::test(Scan::class)
         ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'unknown', 'status' => 'finished', 'result' => ['itemIds' => ['x']]])

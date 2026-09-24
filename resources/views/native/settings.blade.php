@@ -18,7 +18,9 @@
             <text font="display" class="text-lg text-theme-on-background">Find criteria</text>
             <outlined-text-input
                 ref="find-criteria"
-                native:model.debounce.400ms="findCriteria"
+                native:key="find-criteria-{{ $criteriaRevision }}"
+                value="{{ $criteriaSeed }}"
+                @change="criteriaTyped"
                 placeholder="Vintage band tees worth more than $40"
                 :multiline="true"
                 :min-lines="3"
@@ -116,35 +118,42 @@
             <text font="display" class="text-lg text-theme-on-background">API keys</text>
             <outlined-text-input
                 ref="openai-key"
-                native:model.debounce.400ms="openAiApiKey"
+                native:key="openai-key"
+                value="{{ $keySeeds['openAiApiKey'] }}"
+                @change="openAiApiKeyTyped"
                 label="OpenAI API key"
                 placeholder="sk-..."
                 :secure="true"
                 supporting="Stored encrypted on this device. Frames go straight from your phone to OpenAI."
                 class="w-full"
             />
-            <button
+            <thrifty-pressable
                 ref="get-api-key"
-                variant="ghost"
-                size="sm"
-                label="Get an API key"
-                icon-trailing="{{ Ios::ArrowUpRight->value }}"
+                @press="openApiKeyPage"
                 a11y-label="Get an OpenAI API key"
                 a11y-hint="Opens the OpenAI API keys page"
-                @press="openApiKeyPage"
-                class="self-start min-h-[44]"
-            />
+                class="self-start min-h-[44] justify-center"
+            >
+                <row class="items-center gap-1">
+                    <text font="semibold" class="text-sm text-theme-primary">Get an API key</text>
+                    <icon :ios="Ios::ArrowUpRight" :android="Android::OpenInNew" :size="12" class="text-theme-primary" />
+                </row>
+            </thrifty-pressable>
 
             <text class="text-sm text-theme-on-surface-variant mt-2">eBay (optional). Add a client ID and secret to compare against active eBay listings.</text>
             <outlined-text-input
                 ref="ebay-client-id"
-                native:model.debounce.400ms="ebayClientId"
+                native:key="ebay-client-id"
+                value="{{ $keySeeds['ebayClientId'] }}"
+                @change="ebayClientIdTyped"
                 label="eBay client ID"
                 class="w-full"
             />
             <outlined-text-input
                 ref="ebay-client-secret"
-                native:model.debounce.400ms="ebayClientSecret"
+                native:key="ebay-client-secret"
+                value="{{ $keySeeds['ebayClientSecret'] }}"
+                @change="ebayClientSecretTyped"
                 label="eBay client secret"
                 :secure="true"
                 class="w-full"
@@ -179,16 +188,17 @@
             @endforelse
 
             @if ($hasMoreFinds)
-                <button ref="load-more" variant="secondary" label="Load more finds" @press="loadMoreFinds" class="w-full min-h-[44]" />
+                <button ref="load-more" variant="secondary" size="lg" label="Load more finds" @press="loadMoreFinds" class="w-full" />
             @endif
 
             <button
                 ref="delete-all"
                 variant="destructive"
+                size="lg"
                 label="Delete all finds"
                 :disabled="$savedFinds->isEmpty()"
                 @press="confirmDeleteAll"
-                class="w-full mt-2 min-h-[44]"
+                class="w-full mt-2"
             />
             <text class="text-xs text-theme-on-surface-variant text-center">Processing stats are kept.</text>
         </column>

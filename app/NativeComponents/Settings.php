@@ -33,7 +33,17 @@ class Settings extends NativeComponent
 
     private float $lastDeleteAt = 0.0;
 
+    /** The criteria as last typed or chosen (saved on every change). */
     public string $findCriteria = '';
+
+    /**
+     * The value the criteria field is rendered with. It only changes when the app sets the text (a preset,
+     * Clear, the length cap), together with {@see $criteriaRevision}, which re-keys the field so it takes the new
+     * text. Typing never changes it, so a re-render can't echo an older value into a field that's ahead of it.
+     */
+    public string $criteriaSeed = '';
+
+    public int $criteriaRevision = 0;
 
     public int $maxConcurrentFrames = AppSettings::DefaultMaxConcurrentFrames;
 
@@ -44,6 +54,13 @@ class Settings extends NativeComponent
     public string $ebayClientId = '';
 
     public string $ebayClientSecret = '';
+
+    /**
+     * The key fields render with their mount-time values only, for the same reason as {@see $criteriaSeed}.
+     *
+     * @var array{openAiApiKey: string, ebayClientId: string, ebayClientSecret: string}
+     */
+    public array $keySeeds = ['openAiApiKey' => '', 'ebayClientId' => '', 'ebayClientSecret' => ''];
 
     public int $savedFindsLimit = self::SavedFindsPageSize;
 
@@ -62,6 +79,12 @@ class Settings extends NativeComponent
         $this->openAiApiKey = (string) $settings->openAiApiKey();
         $this->ebayClientId = (string) $settings->get(AppSettings::EbayClientId, '');
         $this->ebayClientSecret = (string) $settings->get(AppSettings::EbayClientSecret, '');
+        $this->criteriaSeed = $this->findCriteria;
+        $this->keySeeds = [
+            'openAiApiKey' => $this->openAiApiKey,
+            'ebayClientId' => $this->ebayClientId,
+            'ebayClientSecret' => $this->ebayClientSecret,
+        ];
     }
 
     /**
@@ -78,9 +101,23 @@ class Settings extends NativeComponent
         parent::unmount();
     }
 
-    public function updatedFindCriteria(string $value): void
+    /**
+     * Text inputs sync on every keystroke. A debounced sync loses whatever was typed in the last moment before
+     * Back: the vendor input keeps its timer running after the screen is popped and then reports to a screen
+     * that no longer exists. Live events are queued ahead of the Back navigation, so they always land here.
+     */
+    public function criteriaTyped(string $text): void
     {
-        $this->updateFindCriteria($value);
+        $capped = mb_substr($text, 0, self::FindCriteriaMaxLength);
+
+        if ($capped !== $text) {
+            $this->updateFindCriteria($capped);
+
+            return;
+        }
+
+        $this->findCriteria = $text;
+        app(AppSettings::class)->set(AppSettings::FindCriteria, $text);
     }
 
     public function applyPreset(int $index): void
@@ -109,19 +146,22 @@ class Settings extends NativeComponent
         app(AppSettings::class)->set(AppSettings::ScanIntervalSeconds, (string) $this->scanIntervalSeconds);
     }
 
-    public function updatedOpenAiApiKey(#[\SensitiveParameter] string $value): void
+    public function openAiApiKeyTyped(#[\SensitiveParameter] string $text): void
     {
-        app(AppSettings::class)->set(AppSettings::OpenAiApiKey, trim($value));
+        $this->openAiApiKey = $text;
+        app(AppSettings::class)->set(AppSettings::OpenAiApiKey, trim($text));
     }
 
-    public function updatedEbayClientId(#[\SensitiveParameter] string $value): void
+    public function ebayClientIdTyped(#[\SensitiveParameter] string $text): void
     {
-        app(AppSettings::class)->set(AppSettings::EbayClientId, trim($value));
+        $this->ebayClientId = $text;
+        app(AppSettings::class)->set(AppSettings::EbayClientId, trim($text));
     }
 
-    public function updatedEbayClientSecret(#[\SensitiveParameter] string $value): void
+    public function ebayClientSecretTyped(#[\SensitiveParameter] string $text): void
     {
-        app(AppSettings::class)->set(AppSettings::EbayClientSecret, trim($value));
+        $this->ebayClientSecret = $text;
+        app(AppSettings::class)->set(AppSettings::EbayClientSecret, trim($text));
     }
 
     public function openApiKeyPage(): void
@@ -217,18 +257,13 @@ class Settings extends NativeComponent
     }
 
     /**
-     * Save the criteria, capped at the web's 1000 characters. The property is only written back when the cap cut
-     * something off: that pushes the shortened text into the field (its own limit doesn't hold for multi-line
-     * input on iOS), while an unchanged value is never echoed back into a field the user is typing in.
+     * Set the criteria from the app side (a preset, Clear, the length cap) and push it into the field.
      */
     private function updateFindCriteria(string $value): void
     {
-        $capped = mb_substr($value, 0, self::FindCriteriaMaxLength);
-
-        if ($capped !== $value || $this->findCriteria !== $value) {
-            $this->findCriteria = $capped;
-        }
-
-        app(AppSettings::class)->set(AppSettings::FindCriteria, $capped);
+        $this->findCriteria = mb_substr($value, 0, self::FindCriteriaMaxLength);
+        $this->criteriaSeed = $this->findCriteria;
+        $this->criteriaRevision++;
+        app(AppSettings::class)->set(AppSettings::FindCriteria, $this->findCriteria);
     }
 }

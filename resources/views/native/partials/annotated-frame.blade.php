@@ -6,6 +6,10 @@
     so the ratios line up with the image at any size because the frame keeps the image's aspect ratio. (Percent sizes
     resolve against the screen on iOS, not the parent, so they can't be used here.)
 
+    Zero-ratio spacers are left out rather than given a grow of 0: an empty column renders as `Color.clear`, which a
+    grow-0 slot measures at SwiftUI's default 10pt and shifts an edge-touching box. The box itself always gets a grow of
+    at least 1 (0.1% of the frame) for the same reason.
+
     @var \Illuminate\Support\Collection<int, \App\Models\Item> $items
     @var string $activeItemId
     @var array{path: string, annotated: bool, aspectRatio: float} $frame
@@ -25,9 +29,13 @@
             $isActive = $frameItem->id === $activeItemId;
         @endphp
         <column ref="box-layer-{{ $frameItem->id }}" class="w-full h-full">
-            <column class="w-full" :flexGrow="$box['top']" :flexShrink="1" />
+            @if ($box['top'] > 0)
+                <column class="w-full" :flexGrow="$box['top']" :flexShrink="1" />
+            @endif
             <row class="w-full" :flexGrow="$box['height']" :flexShrink="1">
-                <column class="h-full" :flexGrow="$box['left']" :flexShrink="1" />
+                @if ($box['left'] > 0)
+                    <column class="h-full" :flexGrow="$box['left']" :flexShrink="1" />
+                @endif
                 <column class="h-full" :flexGrow="$box['width']" :flexShrink="1">
                     <pressable
                         ref="box-{{ $frameItem->id }}"
@@ -37,9 +45,13 @@
                         class="w-full h-full rounded-[5] {{ $isActive ? 'border-theme-primary border-[3] bg-theme-primary/15' : 'border-white/70 border-[2]' }}"
                     />
                 </column>
-                <column class="h-full" :flexGrow="$box['right']" :flexShrink="1" />
+                @if ($box['right'] > 0)
+                    <column class="h-full" :flexGrow="$box['right']" :flexShrink="1" />
+                @endif
             </row>
-            <column class="w-full" :flexGrow="$box['bottom']" :flexShrink="1" />
+            @if ($box['bottom'] > 0)
+                <column class="w-full" :flexGrow="$box['bottom']" :flexShrink="1" />
+            @endif
         </column>
     @endforeach
 </stack>

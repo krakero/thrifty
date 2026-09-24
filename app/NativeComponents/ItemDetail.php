@@ -23,6 +23,9 @@ use Thrifty\Camera\Facades\ThriftyCamera;
 
 /**
  * One find: the annotated frame it was seen in, its valuation and the evidence behind it.
+ *
+ * The web app's "Search full frame with Google Lens" link is deliberately not ported: Lens needs a public image URL, and
+ * frames never leave the device.
  */
 class ItemDetail extends NativeComponent
 {
@@ -32,6 +35,9 @@ class ItemDetail extends NativeComponent
     private const MAX_SOURCES = 8;
 
     private const SHARED_COMPARABLES = 3;
+
+    /** The smallest box drawn, in 0–1000 units, so a zero-size box still gets a positive flex-grow. */
+    private const MIN_BOX_RATIO = 1;
 
     public string $itemId = '';
 
@@ -95,6 +101,7 @@ class ItemDetail extends NativeComponent
 
     public function share(): void
     {
+        $this->memo = [];
         $item = $this->item();
 
         if ($item === null) {
@@ -148,6 +155,7 @@ class ItemDetail extends NativeComponent
 
     public function confirmDelete(): void
     {
+        $this->memo = [];
         $item = $this->item();
 
         if ($item === null) {
@@ -168,6 +176,7 @@ class ItemDetail extends NativeComponent
 
     public function deleteFind(): void
     {
+        $this->memo = [];
         $item = $this->item();
 
         if ($item === null) {
@@ -229,6 +238,14 @@ class ItemDetail extends NativeComponent
         $clamp = fn (int $value): int => max(0, min(1000, $value));
         [$top, $bottom] = [$clamp(min($box['yMin'], $box['yMax'])), $clamp(max($box['yMin'], $box['yMax']))];
         [$left, $right] = [$clamp(min($box['xMin'], $box['xMax'])), $clamp(max($box['xMin'], $box['xMax']))];
+
+        if ($bottom - $top < self::MIN_BOX_RATIO) {
+            [$top, $bottom] = $top + self::MIN_BOX_RATIO <= 1000 ? [$top, $top + self::MIN_BOX_RATIO] : [1000 - self::MIN_BOX_RATIO, 1000];
+        }
+
+        if ($right - $left < self::MIN_BOX_RATIO) {
+            [$left, $right] = $left + self::MIN_BOX_RATIO <= 1000 ? [$left, $left + self::MIN_BOX_RATIO] : [1000 - self::MIN_BOX_RATIO, 1000];
+        }
 
         return [
             'top' => $top, 'height' => $bottom - $top, 'bottom' => 1000 - $bottom,

@@ -4,6 +4,7 @@ use App\Models\AppStat;
 use App\Models\Item;
 use App\NativeComponents\History;
 use App\NativeComponents\Layouts\TabsLayout;
+use App\NativeComponents\Scan;
 use Illuminate\Support\Facades\DB;
 use Native\Mobile\Testing\Native;
 
@@ -135,4 +136,17 @@ it('renders loaded finds without re-querying them', function () {
     $screen->call('dismissError');
 
     expect($itemQueries)->toBe(0);
+});
+
+it('picks up finds from frames that finish while history is showing', function () {
+    $screen = Native::test(History::class)->assertSee('No saved finds yet.');
+
+    $find = Item::factory()->create(['name' => 'Background find']);
+
+    $screen->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-1', 'status' => 'failed', 'message' => 'Timed out'])
+        ->assertDontSee('Background find')
+        ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-2', 'status' => 'finished', 'result' => ['itemIds' => []]])
+        ->assertDontSee('Background find')
+        ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-3', 'status' => 'finished', 'result' => ['itemIds' => [$find->id]]])
+        ->assertSee('Background find');
 });

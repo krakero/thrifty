@@ -7,6 +7,7 @@ use App\Models\Item;
 use App\Models\ValuationSource;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 /**
  * Deletes finds along with their valuation sources and the images nothing references any more.
@@ -17,8 +18,13 @@ use Illuminate\Support\Facades\Storage;
  */
 class DeleteItems
 {
-    /** Thumbnails younger than this may belong to an analysis that is still saving, so the sweep leaves them. */
+    /** Files younger than this may belong to an analysis that is still running or saving, so sweeps leave them. */
     public const ORPHAN_SWEEP_MIN_AGE_SECONDS = 600;
+
+    /** The thumbnail sweep after a single delete runs at most this often per PHP context. */
+    public const THUMBNAIL_SWEEP_INTERVAL_SECONDS = 60;
+
+    private static ?int $lastThumbnailSweepAt = null;
 
     public function one(Item $item): void
     {
@@ -36,23 +42,41 @@ class DeleteItems
         });
 
         $this->deleteUnreferencedFiles($paths);
-        $this->sweepOrphanedThumbnails();
+
+        if (self::$lastThumbnailSweepAt === null || now()->getTimestamp() - self::$lastThumbnailSweepAt >= self::THUMBNAIL_SWEEP_INTERVAL_SECONDS) {
+            $this->sweepOrphans('thumbs');
+        }
     }
 
+    /**
+     * Deletes every find, clears every run's frame (including runs whose release failed or predates frame cleanup) and
+     * sweeps the image folders for files nothing references. Recent files are left for analyses still in flight.
+     */
     public function all(): void
     {
         $paths = DB::transaction(function (): array {
             $thumbnails = Item::query()->distinct()->pluck('thumbnail_path')->all();
-            $frameRunIds = Item::query()->whereNotNull('frame_run_id')->distinct()->pluck('frame_run_id')->all();
 
             ValuationSource::query()->delete();
             Item::query()->delete();
 
-            return [...$thumbnails, ...$this->releaseFrames($frameRunIds)];
+            $frames = FrameRun::query()->whereNotNull('frame_path')->distinct()->pluck('frame_path')->all();
+            FrameRun::query()->whereNotNull('frame_path')->update(['frame_path' => null]);
+
+            return [...$thumbnails, ...$frames];
         });
 
         $this->deleteUnreferencedFiles($paths);
-        $this->sweepOrphanedThumbnails();
+        $this->sweepOrphans('thumbs');
+        $this->sweepOrphans('frames');
+    }
+
+    /**
+     * Forget when the thumbnail sweep last ran (tests).
+     */
+    public static function resetSweepThrottle(): void
+    {
+        self::$lastThumbnailSweepAt = null;
     }
 
     /**
@@ -103,19 +127,39 @@ class DeleteItems
     }
 
     /**
-     * Remove thumbnails no item points at, such as one written by an analysis that finished saving just as its find was
-     * deleted. Recent files are skipped because an analysis may still be committing them.
+     * Remove files in a folder that no item or frame run points at, such as a thumbnail written by an analysis that
+     * finished saving just as its find was deleted. Recent files are skipped because an analysis may still be using
+     * them, and files that vanish mid-sweep (the analyzer cleaning up) are ignored.
      */
-    private function sweepOrphanedThumbnails(): void
+    private function sweepOrphans(string $directory): void
     {
+        if ($directory === 'thumbs') {
+            self::$lastThumbnailSweepAt = now()->getTimestamp();
+        }
+
         $disk = Storage::disk('local');
         $cutoff = now()->getTimestamp() - self::ORPHAN_SWEEP_MIN_AGE_SECONDS;
 
-        $candidates = array_values(array_filter(
-            $disk->files('thumbs'),
-            fn (string $path): bool => $disk->lastModified($path) <= $cutoff,
-        ));
+        try {
+            $files = $disk->files($directory);
+        } catch (Throwable $exception) {
+            report($exception);
 
-        $this->deleteUnreferencedFiles($candidates);
+            return;
+        }
+
+        $candidates = array_values(array_filter($files, function (string $path) use ($disk, $cutoff): bool {
+            try {
+                return $disk->lastModified($path) <= $cutoff;
+            } catch (Throwable) {
+                return false;
+            }
+        }));
+
+        try {
+            $this->deleteUnreferencedFiles($candidates);
+        } catch (Throwable $exception) {
+            report($exception);
+        }
     }
 }

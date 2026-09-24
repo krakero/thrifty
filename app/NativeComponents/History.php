@@ -8,6 +8,7 @@ use App\Queries\HistoryQuery;
 use App\Queries\HistoryQueryException;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\View\View;
+use Native\Mobile\Attributes\On;
 use Native\Mobile\Edge\NativeComponent;
 use Throwable;
 
@@ -47,6 +48,20 @@ class History extends NativeComponent
     public function onResume(): void
     {
         $this->reload(keepLoaded: true);
+    }
+
+    /**
+     * A frame finished analysing while History is showing (the Scan tab dispatches it as a shared event), so pick up its
+     * finds straight away, like the web app refreshing history after every frame.
+     *
+     * @param  array<string, mixed>|null  $result
+     */
+    #[On(Scan::FrameAnalyzedEvent)]
+    public function frameAnalyzed(string $id, string $status, mixed $result = null): void
+    {
+        if ($status === 'finished' && is_array($result) && ($result['itemIds'] ?? []) !== []) {
+            $this->reload(keepLoaded: true);
+        }
     }
 
     public function updatedSearch(): void

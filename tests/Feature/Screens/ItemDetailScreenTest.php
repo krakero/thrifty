@@ -7,9 +7,7 @@ use App\Models\ValuationSource;
 use App\NativeComponents\ItemDetail;
 use App\NativeComponents\Layouts\StackLayout;
 use App\Support\LocalTime;
-use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Native\Mobile\Events\Alert\ButtonPressed;
 use Native\Mobile\Testing\Native;
 
@@ -81,34 +79,78 @@ it('shows the find, its frame mates, prices and facts', function () {
         ->assertSee('Agent activity');
 });
 
+/**
+ * The flex-grow sequence of a box layer: the vertical children, then the band's children, with the box marked.
+ *
+ * @return array{vertical: list<float|string>, horizontal: list<float|string>}
+ */
+function boxLayerGrows(array $tree, string $itemId): array
+{
+    $find = function (array $node) use (&$find, $itemId): ?array {
+        if (($node['ref'] ?? null) === "box-layer-{$itemId}") {
+            return $node;
+        }
+
+        foreach ($node['children'] ?? [] as $child) {
+            if (($found = $find($child)) !== null) {
+                return $found;
+            }
+        }
+
+        return null;
+    };
+    $describe = fn (array $node): float|string => ($node['children'][0]['ref'] ?? null) === "box-{$itemId}"
+        ? 'box:'.$node['layout']['flex_grow']
+        : ($node['type'] === 'row' ? 'band:'.$node['layout']['flex_grow'] : $node['layout']['flex_grow']);
+
+    $layer = $find($tree);
+    $band = collect($layer['children'])->firstWhere('type', 'row');
+
+    return [
+        'vertical' => array_map($describe, $layer['children']),
+        'horizontal' => array_map($describe, $band['children']),
+    ];
+}
+
 it('draws a box for every find in the frame, split by flex-grow ratios', function () {
     [, $lamp, $chair] = frameWithTwoFinds();
 
     $screen = itemDetail($lamp);
-    $layer = fn (string $id) => collect(Arr::dot($screen->tree()))->keys()
-        ->first(fn (string $key) => str_ends_with($key, '.ref') && Arr::get($screen->tree(), $key) === "box-layer-{$id}");
-    $grows = function (string $id) use ($screen, $layer): array {
-        $node = Arr::get($screen->tree(), Str::beforeLast($layer($id), '.ref'));
-        [$top, $band, $bottom] = $node['children'];
 
-        return [
-            $top['layout']['flex_grow'] ?? 0, $band['layout']['flex_grow'] ?? 0, $bottom['layout']['flex_grow'] ?? 0,
-            ...array_map(fn (array $child) => $child['layout']['flex_grow'] ?? 0, $band['children']),
-        ];
-    };
-
-    expect($grows($lamp->id))->toBe([125.0, 675.0, 200.0, 100.0, 500.0, 400.0])
-        ->and($grows($chair->id))->toBe([0.0, 400.0, 600.0, 700.0, 300.0, 0.0]);
+    expect(boxLayerGrows($screen->tree(), $lamp->id))->toBe([
+        'vertical' => [125.0, 'band:675', 200.0],
+        'horizontal' => [100.0, 'box:500', 400.0],
+    ]);
 
     $screen->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$chair->id}")
-        ->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$lamp->id}")
         ->assertElement('column', fn (array $node) => ($node['layout']['flex_grow'] ?? null) === 500.0
             && ($node['children'][0]['style']['border_width'] ?? null) === 3.0
             && ($node['children'][0]['ref'] ?? null) === "box-{$lamp->id}");
 });
 
+it('leaves out zero-size spacers for boxes touching the frame edge', function () {
+    [, $lamp, $chair] = frameWithTwoFinds();
+
+    expect(boxLayerGrows(itemDetail($lamp)->tree(), $chair->id))->toBe([
+        'vertical' => ['band:400', 600.0],
+        'horizontal' => [700.0, 'box:300'],
+    ]);
+});
+
+it('draws a zero-size box as a sliver instead of a zero-grow slot', function () {
+    [$run, $lamp] = frameWithTwoFinds();
+    $point = Item::factory()->for($run)->create(['box_x_min' => 1000, 'box_y_min' => 0, 'box_x_max' => 1000, 'box_y_max' => 0]);
+
+    expect(boxLayerGrows(itemDetail($lamp)->tree(), $point->id))->toBe([
+        'vertical' => ['band:1', 999.0],
+        'horizontal' => [999.0, 'box:1'],
+    ]);
+});
+
 it('clamps and orders box edges', function () {
-    expect(ItemDetail::boxRatios(['xMin' => 900, 'yMin' => -20, 'xMax' => 1200, 'yMax' => 500]))
+    expect(ItemDetail::boxRatios(['xMin' => 0, 'yMin' => 500, 'xMax' => 0, 'yMax' => 500]))
+        ->toBe(['top' => 500, 'height' => 1, 'bottom' => 499, 'left' => 0, 'width' => 1, 'right' => 999])
+        ->and(ItemDetail::boxRatios(['xMin' => 900, 'yMin' => -20, 'xMax' => 1200, 'yMax' => 500]))
         ->toBe(['top' => 0, 'height' => 500, 'bottom' => 500, 'left' => 900, 'width' => 100, 'right' => 0])
         ->and(ItemDetail::boxRatios(['xMin' => 600, 'yMin' => 800, 'xMax' => 100, 'yMax' => 200]))
         ->toBe(['top' => 200, 'height' => 600, 'bottom' => 200, 'left' => 100, 'width' => 500, 'right' => 400]);
@@ -236,4 +278,21 @@ it('handles an unknown find', function () {
         ->assertSee('Find not found.')
         ->tap('go-back')
         ->assertWentBack();
+});
+
+it('shares and deletes using the find as it is now, not as last rendered', function () {
+    [$run, $lamp] = frameWithTwoFinds();
+    $screen = itemDetail($lamp);
+
+    Storage::disk('local')->put('frames/newer.jpg', 'x');
+    $newer = FrameRun::factory()->create(['frame_path' => 'frames/newer.jpg']);
+    $lamp->update(['frame_run_id' => $newer->id, 'name' => 'Brass lamp (seen again)']);
+
+    $screen->instance()->share();
+    $screen->assertNativeCalled('ThriftyCamera.ShareFindCard', fn (array $card) => $card['title'] === 'Brass lamp (seen again)'
+        && str_ends_with($card['imagePath'], 'frames/newer.jpg')
+        && count($card['boxes']) === 1);
+
+    $screen->instance()->confirmDelete();
+    $screen->assertNativeCalled('Dialog.Alert', fn (array $params) => str_contains($params['message'], 'Brass lamp (seen again)'));
 });

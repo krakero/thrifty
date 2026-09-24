@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import CoreImage
+import AVFoundation
 
 /// Event names and dispatch helpers shared by the Thrifty camera plugin.
 ///
@@ -167,6 +168,46 @@ enum ThriftyCameraError: LocalizedError {
     case encodingFailed
     case cameraUnavailable
     case permissionDenied
+
+    /// False on the simulator and on devices without a camera, so capture
+    /// is never configured there (AVFoundation fails with opaque errors).
+    static var hasCamera: Bool {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return AVCaptureDevice.default(for: .video) != nil
+        #endif
+    }
+
+    /// Maps AVFoundation / NSError failures to a message a person can act
+    /// on. Raw system text ("The operation could not be completed") is
+    /// never shown; it is logged instead.
+    static func friendlyMessage(for error: Error?, fallback: String) -> String {
+        if let error = error {
+            print("[ThriftyCamera] Underlying error: \(error)")
+        }
+
+        guard hasCamera else {
+            return ThriftyCameraError.cameraUnavailable.localizedDescription
+        }
+
+        guard let avError = error as? AVError else {
+            return fallback
+        }
+
+        switch avError.code {
+        case .applicationIsNotAuthorizedToUseDevice:
+            return ThriftyCameraError.permissionDenied.localizedDescription
+        case .deviceAlreadyUsedByAnotherSession:
+            return "Another app is using the camera. Close it and try again."
+        case .deviceNotConnected, .deviceWasDisconnected:
+            return ThriftyCameraError.cameraUnavailable.localizedDescription
+        case .deviceIsNotAvailableInBackground, .sessionWasInterrupted, .mediaServicesWereReset:
+            return "The camera was interrupted. Turn it off and on again."
+        default:
+            return fallback
+        }
+    }
 
     var errorDescription: String? {
         switch self {

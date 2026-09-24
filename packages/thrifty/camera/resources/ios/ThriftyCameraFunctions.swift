@@ -205,7 +205,8 @@ enum ThriftyImageImporter {
             let frame = try ThriftyFrameWriter.write(cgImage: image, to: directory, quality: ThriftyFrameWriter.imageQuality)
             ThriftyCameraEvents.frameCaptured(frame, source: "image")
         } catch {
-            ThriftyCameraEvents.cameraFailed("Couldn't save that image: \(error.localizedDescription)")
+            print("[ThriftyCamera] Image write failed: \(error)")
+            ThriftyCameraEvents.cameraFailed("Couldn't save that image.")
         }
     }
 
@@ -335,7 +336,8 @@ enum ThriftyVideoFrameExtractor {
             let transformed = naturalSize.applying(transform)
             orientedSize = CGSize(width: abs(transformed.width), height: abs(transformed.height))
         } catch {
-            ThriftyCameraEvents.cameraFailed("Couldn't read that video: \(error.localizedDescription)", runId: runId)
+            print("[ThriftyCamera] Video load failed: \(error)")
+            ThriftyCameraEvents.cameraFailed("Couldn't read that video. Try an MP4 or MOV file.", runId: runId)
             return 0
         }
 

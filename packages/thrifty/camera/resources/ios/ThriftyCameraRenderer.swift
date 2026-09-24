@@ -36,7 +36,6 @@ private struct ThriftyCameraPreview: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ThriftyCameraPreviewView {
         let view = ThriftyCameraPreviewView()
-        view.previewLayer.session = ThriftyCameraController.shared.session
         apply(to: view)
         return view
     }
@@ -51,7 +50,7 @@ private struct ThriftyCameraPreview: UIViewRepresentable {
     }
 
     private func apply(to view: ThriftyCameraPreviewView) {
-        view.previewLayer.isHidden = facing == "off"
+        view.setCameraOn(facing != "off")
 
         ThriftyCameraController.shared.update(
             scanning: scanning,
@@ -102,8 +101,36 @@ final class ThriftyCameraPreviewView: UIView {
 
     @objc private func sessionDidStartRunning() {
         DispatchQueue.main.async {
+            self.attachSessionIfNeeded()
             self.setNeedsLayout()
         }
+    }
+
+    private var isCameraOn = false
+
+    /// Called by the renderer on every prop update (main thread).
+    func setCameraOn(_ on: Bool) {
+        isCameraOn = on
+        previewLayer.isHidden = !on
+
+        if on {
+            attachSessionIfNeeded()
+        } else {
+            previewLayer.session = nil
+        }
+    }
+
+    /// Attaching a preview layer makes AVFoundation build the capture graph,
+    /// so it only happens once the controller has actually started the
+    /// session (never while the camera is off or on the simulator).
+    private func attachSessionIfNeeded() {
+        let session = ThriftyCameraController.shared.session
+
+        guard isCameraOn, previewLayer.session == nil, session.isRunning else {
+            return
+        }
+
+        previewLayer.session = session
     }
 
     override func didMoveToWindow() {

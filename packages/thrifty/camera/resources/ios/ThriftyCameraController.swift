@@ -54,6 +54,12 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     private var reportedPermissionProblem = false
     private var reportedMissingCamera = false
 
+    /// True only between our own startRunning() and stopRunning(). Attaching
+    /// a preview layer makes AVFoundation build the capture graph even
+    /// without a start, and on the simulator that posts runtime errors;
+    /// those are ignored unless we actually meant the camera to run.
+    private var sessionShouldRun = false
+
     private override init() {
         super.init()
 
@@ -124,6 +130,11 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     /// it on), the snapshot waits briefly for the first frame.
     func requestSnapshot(directory: String) {
         sessionQueue.async {
+            guard ThriftyCameraError.hasCamera else {
+                ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
+                return
+            }
+
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .denied, .restricted:
                 ThriftyCameraEvents.cameraFailed(ThriftyCameraError.permissionDenied.localizedDescription)
@@ -163,9 +174,16 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         let shouldRun = visiblePreviews > 0 && appIsActive && desiredFacing != "off"
 
         guard shouldRun else {
+            sessionShouldRun = false
             if session.isRunning {
                 session.stopRunning()
             }
+            return
+        }
+
+        // The simulator has no camera: never configure or start capture there.
+        guard ThriftyCameraError.hasCamera else {
+            reportMissingCamera()
             return
         }
 
@@ -193,9 +211,19 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             return
         }
 
+        sessionShouldRun = true
         if !session.isRunning {
             session.startRunning()
         }
+    }
+
+    private func reportMissingCamera() {
+        guard !reportedMissingCamera else {
+            return
+        }
+
+        reportedMissingCamera = true
+        ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
     }
 
     private func reportPermissionProblem() {
@@ -215,10 +243,7 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
 
         guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
             ?? AVCaptureDevice.default(for: .video) else {
-            if !reportedMissingCamera {
-                reportedMissingCamera = true
-                ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
-            }
+            reportMissingCamera()
             return false
         }
 
@@ -226,7 +251,7 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         do {
             input = try AVCaptureDeviceInput(device: device)
         } catch {
-            ThriftyCameraEvents.cameraFailed("Couldn't start the camera: \(error.localizedDescription)")
+            ThriftyCameraEvents.cameraFailed(ThriftyCameraError.friendlyMessage(for: error, fallback: "Couldn't start the camera. Turn it off and on again."))
             return false
         }
 
@@ -299,17 +324,22 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     }
 
     @objc private func sessionRuntimeError(_ notification: Notification) {
-        let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError
+        let error = notification.userInfo?[AVCaptureSessionErrorKey] as? Error
 
         sessionQueue.async {
-            if error?.code == .mediaServicesWereReset {
+            guard self.sessionShouldRun else {
+                print("[ThriftyCamera] Ignoring capture error while the camera is off: \(String(describing: error))")
+                return
+            }
+
+            if (error as? AVError)?.code == .mediaServicesWereReset {
                 // Recoverable: rebuild the input and restart.
                 self.configuredPosition = nil
                 self.evaluateRunningState()
                 return
             }
 
-            ThriftyCameraEvents.cameraFailed("The camera stopped: \(error?.localizedDescription ?? "unknown error").")
+            ThriftyCameraEvents.cameraFailed(ThriftyCameraError.friendlyMessage(for: error, fallback: "The camera stopped unexpectedly. Turn it off and on again."))
         }
     }
 
@@ -363,7 +393,8 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             let frame = try ThriftyFrameWriter.write(cgImage: image, to: directory, capturedAt: capturedAt)
             ThriftyCameraEvents.frameCaptured(frame, source: source)
         } catch {
-            ThriftyCameraEvents.cameraFailed("Couldn't save the camera frame: \(error.localizedDescription)")
+            print("[ThriftyCamera] Frame write failed: \(error)")
+            ThriftyCameraEvents.cameraFailed(ThriftyCameraError.encodingFailed.localizedDescription)
         }
     }
 

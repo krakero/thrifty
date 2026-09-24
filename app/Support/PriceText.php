@@ -2,6 +2,8 @@
 
 namespace App\Support;
 
+use App\Models\Item;
+
 /**
  * Display helpers shared by the find card and detail screens.
  */
@@ -25,6 +27,20 @@ class PriceText
             [self::WORD_JOINER.'–'.self::WORD_JOINER, self::NO_BREAK_SPACE],
             $text,
         );
+    }
+
+    /**
+     * How VoiceOver should read a find's resale estimate: "resale $20 to $35", or "resale value pending" with no estimate.
+     */
+    public static function spokenResale(Item $item): string
+    {
+        $range = Money::resaleRange($item);
+
+        if ($item->estimated_low_cents === null && $item->estimated_high_cents === null) {
+            return 'resale '.mb_strtolower($range);
+        }
+
+        return 'resale '.str_replace('–', ' to ', $range);
     }
 
     /**

@@ -47,13 +47,14 @@
                             <thrifty-pressable
                                 ref="frame-item-{{ $frameItem->id }}"
                                 @press="selectItem('{{ $frameItem->id }}')"
-                                a11y-label="{{ $frameItem->name }}, resale {{ Money::resaleRange($frameItem) }}"
+                                a11y-label="{{ $frameItem->name }}, {{ PriceText::spokenResale($frameItem) }}"
                                 a11y-hint="{{ $isActive ? 'Selected find' : 'Shows this find' }}"
                                 class="w-[168] gap-1 rounded-xl p-3 border {{ $isActive ? 'bg-theme-primary/15 border-theme-primary' : 'bg-theme-surface border-theme-outline' }}"
                             >
                                 <text class="text-[11] uppercase text-theme-on-surface-variant" :max-lines="1">{{ $frameItem->category }}</text>
                                 <text font="semibold" class="text-sm text-theme-on-surface" :max-lines="1">{{ $frameItem->name }}</text>
-                                <text font="mono" class="text-sm text-theme-accent">{{ PriceText::keepTogether(Money::resaleRange($frameItem)) }}</text>
+                                {{-- The chip is a fixed width, so at the largest text sizes the range may break after its dash (never mid-number). --}}
+                                <text font="mono" class="text-sm text-theme-accent">{{ Money::resaleRange($frameItem) }}</text>
                             </thrifty-pressable>
                         @endforeach
                     </row>

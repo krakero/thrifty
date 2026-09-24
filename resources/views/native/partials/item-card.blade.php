@@ -17,7 +17,7 @@
     native:key="item-card-{{ $item->id }}"
     ref="item-card-{{ $item->id }}"
     @navigate="'/finds/'.$item->id.'?from='.$from, ['from' => $from]"
-    a11y-label="{{ $item->name }}, resale {{ Money::resaleRange($item) }}"
+    a11y-label="{{ $item->name }}, {{ PriceText::spokenResale($item) }}"
     a11y-hint="Opens the find details"
     class="w-full gap-2 rounded-2xl bg-theme-surface border border-theme-outline p-3"
 >

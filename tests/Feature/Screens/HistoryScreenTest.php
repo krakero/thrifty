@@ -202,3 +202,14 @@ it('keeps every History control at least 44pt', function () {
             && ($node['layout']['width'] ?? 0) >= 44 && ($node['layout']['height'] ?? 0) >= 44);
     }
 });
+
+it('reads each card to VoiceOver as its name and spoken resale range', function () {
+    $priced = Item::factory()->create(['name' => 'Brass lamp', 'estimated_low_cents' => 2000, 'estimated_high_cents' => 3500]);
+    $pending = Item::factory()->create(['name' => 'Vinyl records lot', 'estimated_low_cents' => null, 'estimated_high_cents' => null]);
+
+    Native::test(History::class)
+        ->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === "item-card-{$priced->id}"
+            && ($node['props']['a11y_label'] ?? null) === 'Brass lamp, resale $20 to $35')
+        ->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === "item-card-{$pending->id}"
+            && ($node['props']['a11y_label'] ?? null) === 'Vinyl records lot, resale value pending');
+});

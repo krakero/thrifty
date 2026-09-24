@@ -16,6 +16,11 @@ class FrameAgent
 
     public const MaxTurns = 10;
 
+    /**
+     * Overall wall-clock budget for one frame's agent run, across all turns and retries.
+     */
+    public const DeadlineSeconds = 150;
+
     public const AgentInputText = 'Analyze this frame. Return and value only clearly identifiable items that are likely being offered for sale.';
 
     public const Instructions = <<<'TEXT'

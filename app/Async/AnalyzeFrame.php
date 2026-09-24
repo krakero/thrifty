@@ -4,6 +4,7 @@ namespace App\Async;
 
 use App\Agent\Exceptions\AnalysisFailed;
 use App\Agent\Exceptions\MissingApiKey;
+use App\Agent\FrameAgent;
 use App\Agent\FrameAnalyzer;
 use Native\Mobile\AsyncTask;
 use Native\Mobile\PendingAsyncTask;
@@ -16,9 +17,10 @@ use Native\Mobile\PendingAsyncTask;
 class AnalyzeFrame extends AsyncTask
 {
     /**
-     * Agent runs routinely take 10-60s+ (several model turns plus web research), well past the 60s default.
+     * The watchdog starts when the task is queued, and the iOS pool assigns its four slots round-robin, so a task can
+     * wait behind up to three others that each use their full {@see FrameAgent::DeadlineSeconds} budget.
      */
-    public const TimeoutSeconds = 240;
+    public const TimeoutSeconds = 600;
 
     public static function dispatch(mixed ...$args): PendingAsyncTask
     {
@@ -28,6 +30,8 @@ class AnalyzeFrame extends AsyncTask
     /**
      * @param  string  $framePath  Frame JPEG, relative to the `local` disk.
      * @param  string  $capturedAt  ISO-8601 capture time.
+     * @param  string  $frameRunId  Pre-generated ULID; the FrameRun is saved with this id on success and on failure.
+     * @param  string  $findCriteria  The find criteria as they were when the frame was captured.
      * @return array{
      *     frameRunId: string,
      *     itemIds: list<string>,
@@ -39,8 +43,8 @@ class AnalyzeFrame extends AsyncTask
      * @throws MissingApiKey
      * @throws AnalysisFailed
      */
-    public function handle(string $scanSessionId, string $framePath, string $capturedAt): array
+    public function handle(string $scanSessionId, string $framePath, string $capturedAt, string $frameRunId, string $findCriteria): array
     {
-        return app(FrameAnalyzer::class)->analyze($scanSessionId, $framePath, $capturedAt);
+        return app(FrameAnalyzer::class)->analyze($scanSessionId, $framePath, $capturedAt, $frameRunId, $findCriteria);
     }
 }

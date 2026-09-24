@@ -19,6 +19,7 @@ use App\Services\AppSettings;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Native\Mobile\AsyncTask;
 
 beforeEach(function () {
@@ -144,9 +145,9 @@ function openAiRequests(): array
         ->all();
 }
 
-function analyze(string $sessionId, string $framePath = 'frames/frame-1.jpg', string $capturedAt = '2026-09-23T15:00:00.000Z'): array
+function analyze(string $sessionId, string $framePath = 'frames/frame-1.jpg', string $capturedAt = '2026-09-23T15:00:00.000Z', ?string $frameRunId = null, string $findCriteria = ''): array
 {
-    return app(FrameAnalyzer::class)->analyze($sessionId, $framePath, $capturedAt);
+    return app(FrameAnalyzer::class)->analyze($sessionId, $framePath, $capturedAt, $frameRunId ?? (string) Str::ulid(), $findCriteria);
 }
 
 it('requires an OpenAI API key before analyzing', function () {
@@ -165,7 +166,6 @@ it('requires an OpenAI API key before analyzing', function () {
 it('runs the tool loop, persists finds and records a sanitized audit', function () {
     app(AppSettings::class)->set(AppSettings::EbayClientId, 'ebay-id');
     app(AppSettings::class)->set(AppSettings::EbayClientSecret, 'ebay-secret');
-    app(AppSettings::class)->set(AppSettings::FindCriteria, 'Vintage electronics');
     agentFrame();
 
     $previous = ['candidates' => [[
@@ -189,7 +189,7 @@ it('runs the tool loop, persists finds and records a sanitized audit', function 
             ->push(agentFinalResponse([agentCandidate()])),
     ]);
 
-    $result = analyze($this->session->id);
+    $result = analyze($this->session->id, findCriteria: 'Vintage electronics');
 
     $item = Item::sole();
     $run = FrameRun::sole();
@@ -496,7 +496,7 @@ it('dispatches as an async task with a long timeout and returns a JSON-safe resu
     fakeOpenAi([agentFinalResponse([agentCandidate()])]);
     $received = null;
 
-    $pending = AnalyzeFrame::dispatch($this->session->id, 'frames/frame-1.jpg', '2026-09-23T15:00:00Z')
+    $pending = AnalyzeFrame::dispatch($this->session->id, 'frames/frame-1.jpg', '2026-09-23T15:00:00Z', (string) Str::ulid(), '')
         ->finished(function (array $result) use (&$received) {
             $received = $result;
         });
@@ -513,7 +513,7 @@ it('hands the user-facing message to the failed callback', function () {
     agentFrame();
     $error = null;
 
-    AnalyzeFrame::dispatch($this->session->id, 'frames/frame-1.jpg', '2026-09-23T15:00:00Z')
+    AnalyzeFrame::dispatch($this->session->id, 'frames/frame-1.jpg', '2026-09-23T15:00:00Z', (string) Str::ulid(), '')
         ->failed(function (Throwable $exception) use (&$error) {
             $error = $exception;
         })

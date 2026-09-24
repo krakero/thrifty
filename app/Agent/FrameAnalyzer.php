@@ -50,7 +50,7 @@ class FrameAnalyzer
      *
      * @throws AnalysisFailed
      */
-    public function analyze(string $scanSessionId, string $framePath, string $capturedAt): array
+    public function analyze(string $scanSessionId, string $framePath, string $capturedAt, string $frameRunId, string $findCriteria): array
     {
         $started = hrtime(true);
         $disk = Storage::disk('local');
@@ -68,9 +68,8 @@ class FrameAnalyzer
             throw new AnalysisFailed('The captured frame could not be read.');
         }
 
-        $findCriteria = mb_substr($this->settings->findCriteria(), 0, 1000);
+        $findCriteria = mb_substr($findCriteria, 0, 1000);
         $capturedAt = self::parseCapturedAt($capturedAt);
-        $frameRunId = (string) Str::ulid();
 
         $this->withWriteRetry(fn () => ScanSession::query()->insertOrIgnore([
             'id' => $scanSessionId,

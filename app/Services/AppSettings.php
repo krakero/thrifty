@@ -21,11 +21,17 @@ class AppSettings
 
     public const ScanIntervalSeconds = 'scan_interval_seconds';
 
+    /**
+     * The web default (5) clamped to the device limit.
+     */
     public const DefaultMaxConcurrentFrames = 4;
 
-    public const MaxConcurrentFramesLimit = 10;
+    /**
+     * The iOS AsyncTask pool has four fixed slots, so more concurrent analyses would only queue.
+     */
+    public const MaxConcurrentFramesLimit = 4;
 
-    public const DefaultScanIntervalSeconds = 5;
+    public const DefaultScanIntervalSeconds = 2;
 
     /** @var list<array{label: string, value: string}> */
     public const FindCriteriaPresets = [
@@ -73,9 +79,12 @@ class AppSettings
         return ['clientId' => $clientId, 'clientSecret' => $clientSecret];
     }
 
+    /**
+     * The saved find criteria, untrimmed like the web app sends them.
+     */
     public function findCriteria(): string
     {
-        return trim((string) $this->get(self::FindCriteria, ''));
+        return (string) $this->get(self::FindCriteria, '');
     }
 
     public function maxConcurrentFrames(): int

@@ -28,7 +28,7 @@ class Money
     }
 
     /**
-     * The conservative resale range, e.g. "$20–$35", or a single bound when only one is known.
+     * The conservative resale range, e.g. "$20–$35", mirroring the web app's `formatRange()`.
      */
     public static function resaleRange(Item $item): string
     {
@@ -36,13 +36,13 @@ class Money
         $high = $item->estimated_high_cents;
 
         if ($low === null && $high === null) {
-            return '—';
+            return 'Value pending';
         }
 
-        if ($low === null || $high === null || $low === $high) {
-            return self::format($low ?? $high, $item->currency);
+        if ($low === $high || $high === null) {
+            return self::format($low ?? $high ?? 0, $item->currency);
         }
 
-        return self::format($low, $item->currency).'–'.self::format($high, $item->currency);
+        return self::format($low ?? 0, $item->currency).'–'.self::format($high, $item->currency);
     }
 }

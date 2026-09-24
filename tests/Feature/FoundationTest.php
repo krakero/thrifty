@@ -53,5 +53,8 @@ it('formats cents and resale ranges', function () {
     expect(Money::format(null))->toBe('—')
         ->and(Money::format(1999))->toBe('$19.99')
         ->and(Money::format(4000, 'GBP'))->toBe('£40')
-        ->and(Money::resaleRange($item))->toBe('$20–$35.50');
+        ->and(Money::resaleRange($item))->toBe('$20–$35.50')
+        ->and(Money::resaleRange(Item::factory()->make(['estimated_low_cents' => null, 'estimated_high_cents' => null])))->toBe('Value pending')
+        ->and(Money::resaleRange(Item::factory()->make(['estimated_low_cents' => null, 'estimated_high_cents' => 900])))->toBe('$0–$9')
+        ->and(Money::resaleRange(Item::factory()->make(['estimated_low_cents' => 900, 'estimated_high_cents' => null])))->toBe('$9');
 });

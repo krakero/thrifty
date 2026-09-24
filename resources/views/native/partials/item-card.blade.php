@@ -3,7 +3,7 @@
 
     @var \App\Models\Item $item
     @var bool $showCapturedAt  History shows the absolute capture time; the live feed shows relative age.
-    @var string $from  'scan' or 'history' — preserved so detail screens know their origin.
+    @var string $from  'scan' or 'history': the tab the find opens in.
 --}}
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
@@ -16,7 +16,7 @@
 <thrifty-pressable
     native:key="item-card-{{ $item->id }}"
     ref="item-card-{{ $item->id }}"
-    @navigate="'/finds/'.$item->id.'?from='.$from, ['from' => $from]"
+    @navigate="\App\NativeComponents\Layouts\TabsLayout::findUri($from, $item->id)"
     a11y-label="{{ $item->name }}, {{ PriceText::spokenResale($item) }}"
     a11y-hint="Opens the find details"
     class="w-full gap-2 rounded-2xl bg-theme-surface border border-theme-outline p-3"

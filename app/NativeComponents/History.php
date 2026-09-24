@@ -4,6 +4,7 @@ namespace App\NativeComponents;
 
 use App\Models\AppStat;
 use App\Models\Item;
+use App\NativeComponents\Layouts\TabsLayout;
 use App\Queries\HistoryQuery;
 use App\Queries\HistoryQueryException;
 use App\Scanning\FrameResults;
@@ -19,6 +20,9 @@ use Throwable;
  */
 class History extends NativeComponent
 {
+    /** History keeps its own heading; the tab's nav bar (and its navigation stack) stays, only hidden. */
+    protected bool $hidesNavBar = true;
+
     public string $search = '';
 
     /** @var list<string> */
@@ -112,7 +116,7 @@ class History extends NativeComponent
 
     public function openSettings(): void
     {
-        $this->navigate('/settings');
+        $this->navigate(TabsLayout::settingsUri(TabsLayout::HistoryTab));
     }
 
     public function render(): View

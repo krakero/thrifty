@@ -7,6 +7,7 @@ use App\Icons\Android;
 use App\Icons\Ios;
 use App\Models\Item;
 use App\Models\ValuationSource;
+use App\NativeComponents\Layouts\TabsLayout;
 use App\Scanning\ReceivesFrameAnalyses;
 use App\Support\LocalTime;
 use App\Support\Money;
@@ -42,7 +43,7 @@ class ItemDetail extends NativeComponent
 
     public string $itemId = '';
 
-    /** Which tab opened this find: 'scan' or 'history'. */
+    /** Which tab this find was opened in ('scan' or 'history'), from its route prefix. */
     public string $from = 'history';
 
     public ?string $error = null;
@@ -65,7 +66,7 @@ class ItemDetail extends NativeComponent
     public function mount(): void
     {
         $this->itemId = (string) $this->param('id');
-        $this->from = $this->data('from') === 'scan' ? 'scan' : 'history';
+        $this->from = TabsLayout::tabFor($this->param('tab') ?? $this->data('from'));
         $this->chipOrder = $this->frameItems()
             ->sortBy(fn (Item $frameItem): int => $frameItem->id === $this->itemId ? 0 : 1)
             ->values()
@@ -100,7 +101,7 @@ class ItemDetail extends NativeComponent
 
     public function openActivity(): void
     {
-        $this->navigate("/finds/{$this->itemId}/activity?from={$this->from}", ['from' => $this->from]);
+        $this->navigate(TabsLayout::activityUri($this->from, $this->itemId));
     }
 
     public function openSource(int $index): void

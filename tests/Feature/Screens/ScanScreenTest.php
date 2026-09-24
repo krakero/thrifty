@@ -141,7 +141,7 @@ function pickedTempFile(string $extension): string
 }
 
 it('is the home tab', function () {
-    Native::visit('/')->assertScreen(Scan::class)->assertHasTab('Scan')->assertTabActive('Scan');
+    Native::visit('/scan')->assertScreen(Scan::class)->assertHasTab('Scan')->assertTabActive('Scan')->assertNavBarHidden();
 });
 
 it('starts paused with the camera off', function () {
@@ -203,7 +203,7 @@ it('asks for an api key instead of dispatching without one', function () {
     $this->asyncFake->assertNotDispatched();
     Storage::disk('local')->assertMissing('frames/frame.jpg');
 
-    $component->tap('error-open-settings')->assertNavigatedTo('/settings');
+    $component->tap('error-open-settings')->assertNavigatedTo('/scan/settings');
 });
 
 it('drops frames while every analysis slot is busy', function () {
@@ -312,7 +312,7 @@ it('offers settings when an analysis reports a missing key', function () {
     captureFrame($component);
     failAnalysis($component, MissingApiKey::class, 'Add your OpenAI API key in Settings to start scanning.')
         ->tap('error-open-settings')
-        ->assertNavigatedTo('/settings');
+        ->assertNavigatedTo('/scan/settings');
 });
 
 it('dismisses the error banner', function () {
@@ -503,7 +503,7 @@ it('stops scanning and clears the source when the tab is left', function () {
 });
 
 it('opens settings', function () {
-    Native::test(Scan::class)->tap('open-settings')->assertNavigatedTo('/settings');
+    Native::test(Scan::class)->tap('open-settings')->assertNavigatedTo('/scan/settings');
 });
 
 it('opens the gallery picker for uploads', function () {

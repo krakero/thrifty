@@ -5,6 +5,7 @@ namespace App\NativeComponents;
 use App\Enums\FrameRunStatus;
 use App\Models\FrameRun;
 use App\Models\Item;
+use App\NativeComponents\Layouts\TabsLayout;
 use App\Scanning\ReceivesFrameAnalyses;
 use Illuminate\View\View;
 use Native\Mobile\Edge\NativeComponent;
@@ -33,7 +34,7 @@ class AgentActivity extends NativeComponent
     public function mount(): void
     {
         $this->itemId = (string) $this->param('id');
-        $this->from = $this->data('from') === 'scan' ? 'scan' : 'history';
+        $this->from = TabsLayout::tabFor($this->param('tab') ?? $this->data('from'));
     }
 
     public function navTitle(): string

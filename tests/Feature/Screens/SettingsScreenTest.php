@@ -122,9 +122,9 @@ it('is accessible', function () {
     Native::test(Settings::class)->assertAccessible();
 });
 
-it('is routed under the stack layout', function () {
-    Native::visit('/settings')->assertScreen(Settings::class)->assertNavTitle('Settings');
-});
+it('is routed inside whichever tab opened it', function (string $tab, string $label) {
+    Native::visit("/{$tab}/settings")->assertScreen(Settings::class)->assertNavTitle('Settings')->assertTabActive($label);
+})->with([['scan', 'Scan'], ['history', 'History']]);
 
 it('keeps typed api keys when leaving without blurring', function () {
     $component = Native::test(Settings::class)

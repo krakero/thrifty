@@ -4,7 +4,7 @@ use App\Enums\FrameRunStatus;
 use App\Models\FrameRun;
 use App\Models\Item;
 use App\NativeComponents\AgentActivity;
-use App\NativeComponents\Layouts\StackLayout;
+use App\NativeComponents\Layouts\TabsLayout;
 use App\Support\LocalTime;
 use Native\Mobile\Testing\Native;
 
@@ -18,7 +18,7 @@ afterEach(function () {
 
 function agentActivity(Item|string $item)
 {
-    return Native::test(AgentActivity::class, ['id' => $item instanceof Item ? $item->id : $item], ['from' => 'history'], StackLayout::class);
+    return Native::test(AgentActivity::class, ['tab' => 'history', 'id' => $item instanceof Item ? $item->id : $item], [], TabsLayout::class);
 }
 
 function recordedRun(array $attributes = []): FrameRun

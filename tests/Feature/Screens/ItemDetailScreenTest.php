@@ -6,7 +6,7 @@ use App\Models\Item;
 use App\Models\ValuationSource;
 use App\NativeComponents\AgentActivity;
 use App\NativeComponents\ItemDetail;
-use App\NativeComponents\Layouts\StackLayout;
+use App\NativeComponents\Layouts\TabsLayout;
 use App\NativeComponents\Scan;
 use App\Scanning\LiveScanState;
 use App\Support\LocalTime;
@@ -58,7 +58,7 @@ function frameWithTwoFinds(): array
 
 function itemDetail(Item|string $item, string $from = 'history')
 {
-    return Native::test(ItemDetail::class, ['id' => $item instanceof Item ? $item->id : $item], ['from' => $from], StackLayout::class);
+    return Native::test(ItemDetail::class, ['tab' => $from, 'id' => $item instanceof Item ? $item->id : $item], [], TabsLayout::class);
 }
 
 it('shows the find, its frame mates, prices and facts', function () {
@@ -274,7 +274,7 @@ it('opens agent activity keeping the origin', function () {
 
     itemDetail($lamp, 'scan')
         ->tap('agent-activity')
-        ->assertNavigatedTo("/finds/{$lamp->id}/activity?from=scan");
+        ->assertNavigatedTo("/scan/finds/{$lamp->id}/activity");
 });
 
 it('handles an unknown find', function () {
@@ -319,7 +319,7 @@ it('lets agent activity settle scan analyses too', function () {
     $state = app(LiveScanState::class);
     $state->pending['task-2'] = ['sessionId' => 'session', 'frameRunId' => 'run', 'dispatchedAt' => time()];
 
-    Native::test(AgentActivity::class, ['id' => Item::factory()->create()->id], [], StackLayout::class)
+    Native::test(AgentActivity::class, ['id' => Item::factory()->create()->id], [], TabsLayout::class)
         ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-2', 'status' => 'finished', 'result' => ['itemIds' => []]])
         ->assertNativeNotCalled('ThriftyCamera.Chime');
 

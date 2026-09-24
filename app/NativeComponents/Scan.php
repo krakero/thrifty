@@ -10,6 +10,7 @@ use App\Models\AppStat;
 use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ScanSession;
+use App\NativeComponents\Layouts\TabsLayout;
 use App\Scanning\FrameDispatcher;
 use App\Scanning\FrameFiles;
 use App\Scanning\FrameResults;
@@ -41,6 +42,9 @@ use Thrifty\Camera\Facades\ThriftyCamera;
  */
 class Scan extends NativeComponent
 {
+    /** Scan stays immersive: the tab's nav bar (and its navigation stack) stays, only hidden. */
+    protected bool $hidesNavBar = true;
+
     use ReceivesFrameAnalyses;
 
     public const FrameAnalyzedEvent = 'frame-analyzed';
@@ -161,7 +165,7 @@ class Scan extends NativeComponent
 
     public function openSettings(): void
     {
-        $this->navigate('/settings');
+        $this->navigate(TabsLayout::settingsUri(TabsLayout::ScanTab));
     }
 
     /**

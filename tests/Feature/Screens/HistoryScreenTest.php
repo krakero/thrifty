@@ -100,11 +100,11 @@ it('opens settings and item details', function () {
 
     Native::test(History::class)
         ->tap('open-settings')
-        ->assertNavigatedTo('/settings');
+        ->assertNavigatedTo('/history/settings');
 
     Native::test(History::class)
         ->tap("item-card-{$item->id}")
-        ->assertNavigatedTo("/finds/{$item->id}?from=history");
+        ->assertNavigatedTo("/history/finds/{$item->id}");
 });
 
 it('keeps every loaded page when returning to history', function () {
@@ -184,7 +184,7 @@ it('shows the shared scan error and offers settings for key errors', function ()
     Native::test(History::class)
         ->assertSee('Add your OpenAI API key in Settings to start scanning.')
         ->tap('scan-error-settings')
-        ->assertNavigatedTo('/settings');
+        ->assertNavigatedTo('/history/settings');
 
     Native::test(History::class)
         ->tap('dismiss-scan-error')

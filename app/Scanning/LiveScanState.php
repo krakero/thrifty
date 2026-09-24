@@ -8,10 +8,9 @@ use Illuminate\Container\Attributes\Singleton;
 /**
  * The Scan screen's working state, held for the life of the app runtime.
  *
- * The Scan component is unmounted when the user switches tabs and is not the active
- * component while a pushed screen (a find, Settings) is on top, so anything that must
- * outlive one component instance — in-flight analyses, the live feed, the current
- * session — lives here instead of on the component.
+ * Scan is not the active component while a pushed screen (a find, Settings) is on top, and async results are
+ * only delivered to the active component, so the in-flight analyses and live feed live here rather than on
+ * one component instance. Leaving the Scan tab resets the source, like the web app (see `Scan::unmount()`).
  */
 #[Singleton]
 class LiveScanState
@@ -35,25 +34,24 @@ class LiveScanState
 
     public bool $scanning = false;
 
-    /** For video sessions: whether the plugin has finished emitting frames. */
-    public bool $videoExtracted = false;
+    /** The running video extraction, whose frames are the only video frames accepted. */
+    public ?string $videoRunId = null;
 
-    /** Absolute path of the uploaded photo shown behind the overlay. */
+    /** Absolute path of the picked gallery file, removed once it has been imported or played. */
+    public ?string $pickedMediaPath = null;
+
+    /** The uploaded photo or latest video frame shown on the stage, relative to the `local` disk. */
     public ?string $stillPreviewPath = null;
+
+    /** When a snapshot requested while the camera was off should be taken (microtime), or 0. */
+    public float $snapshotDueAt = 0.0;
 
     /**
      * Analyses in flight, keyed by async task id.
      *
-     * @var array<string, array{sessionId: string, framePath: string, dispatchedAt: int}>
+     * @var array<string, array{sessionId: string, frameRunId: string, dispatchedAt: int}>
      */
     public array $pending = [];
-
-    /**
-     * Uploaded frames waiting for a free analysis slot.
-     *
-     * @var list<array{sessionId: string, framePath: string, capturedAt: string}>
-     */
-    public array $queue = [];
 
     /** @var list<string> Item ids in the live feed, newest first. */
     public array $liveItemIds = [];
@@ -66,6 +64,8 @@ class LiveScanState
     public array $revealQueue = [];
 
     public float $lastRevealAt = 0.0;
+
+    public float $lastReconcileAt = 0.0;
 
     public float $flashAt = 0.0;
 
@@ -108,23 +108,6 @@ class LiveScanState
     public function inFlight(): int
     {
         return count($this->pending);
-    }
-
-    public function hasWorkFor(string $sessionId): bool
-    {
-        foreach ($this->pending as $entry) {
-            if ($entry['sessionId'] === $sessionId) {
-                return true;
-            }
-        }
-
-        foreach ($this->queue as $entry) {
-            if ($entry['sessionId'] === $sessionId) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     public function fail(string $message, bool $needsApiKey = false): void

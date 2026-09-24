@@ -10,7 +10,6 @@ use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ScanSession;
 use App\NativeComponents\Scan;
-use App\Scanning\FrameImporter;
 use App\Scanning\LiveScanState;
 use App\Services\AppSettings;
 use Illuminate\Support\Facades\Storage;
@@ -26,6 +25,7 @@ beforeEach(function () {
     $this->asyncFake = AsyncTask::fake();
     $this->bridge = Native::fakeBridge();
     $this->mock(FrameAnalyzer::class)->shouldReceive('analyze')->andReturn([]);
+    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test');
 });
 
 afterEach(function () {
@@ -38,28 +38,30 @@ function scanState(): LiveScanState
 }
 
 /**
- * Deliver a camera frame the way the plugin does: a JPEG in the frames directory plus a FrameCaptured event.
+ * Deliver a frame the way the plugin does: a JPEG in the frames directory plus a FrameCaptured event.
  */
-function captureFrame($component, string $source = 'live', string $name = 'frame.jpg')
+function captureFrame($component, string $source = 'live', string $name = 'frame.jpg', ?string $runId = null)
 {
     $disk = Storage::disk('local');
     $disk->put('frames/'.$name, 'jpeg');
 
-    return $component->emitNative(FrameCaptured::class, [
+    return $component->emitNative(FrameCaptured::class, array_filter([
         'path' => $disk->path('frames/'.$name),
         'source' => $source,
         'width' => 1280,
         'height' => 720,
         'capturedAt' => '2026-09-23T10:00:00Z',
-    ]);
+        'videoSeconds' => $source === 'video' ? 1.35 : null,
+        'runId' => $runId,
+    ], fn ($value) => $value !== null));
 }
 
 /**
  * The shared async delivery for the most recent (or given) AnalyzeFrame dispatch.
  *
- * @param  array<string, mixed>  $overrides
+ * @param  list<string>  $itemIds
  */
-function finishAnalysis($component, array $itemIds = [], ?string $taskId = null, array $overrides = [])
+function finishAnalysis($component, array $itemIds = [], ?string $taskId = null)
 {
     $taskId ??= array_key_last(scanState()->pending);
 
@@ -67,27 +69,58 @@ function finishAnalysis($component, array $itemIds = [], ?string $taskId = null,
         'id' => $taskId,
         'status' => 'finished',
         'result' => [
-            'frameRunId' => 'run',
+            'frameRunId' => scanState()->pending[$taskId]['frameRunId'] ?? 'run',
             'itemIds' => $itemIds,
             'newItemIds' => $itemIds,
             'stats' => ['framesProcessed' => 1, 'itemsIdentified' => count($itemIds), 'searchesPerformed' => 0, 'modelCalls' => 1],
             'run' => ['latencyMs' => 1000, 'modelCalls' => 1, 'searchesPerformed' => 0],
         ],
-        ...$overrides,
     ]);
 }
+
+function failAnalysis($component, string $exceptionClass, string $message)
+{
+    return $component->emitNative(Scan::FrameAnalyzedEvent, [
+        'id' => array_key_last(scanState()->pending),
+        'status' => 'failed',
+        'exceptionClass' => $exceptionClass,
+        'message' => $message,
+    ]);
+}
+
+function pickMedia($component, string $path, string $type)
+{
+    return $component->emitNative(MediaSelected::class, [
+        'success' => true,
+        'files' => [['path' => $path, 'type' => $type, 'mimeType' => $type === 'video' ? 'video/quicktime' : 'image/heic']],
+        'count' => 1,
+        'id' => Scan::UploadPickerId,
+    ]);
+}
+
+function pickedTempFile(string $extension): string
+{
+    $path = tempnam(sys_get_temp_dir(), 'picked').'.'.$extension;
+    file_put_contents($path, 'original');
+
+    return $path;
+}
+
+it('is the home tab', function () {
+    Native::visit('/')->assertScreen(Scan::class)->assertHasTab('Scan')->assertTabActive('Scan');
+});
 
 it('starts paused with the camera off', function () {
     Native::test(Scan::class)
         ->assertSee('Paused')
         ->assertSee('Camera off')
         ->assertSee('0/4')
-        ->assertSee('Live')
         ->assertSee('Snap')
-        ->assertSee('Upload');
+        ->assertSee('Upload')
+        ->assertMissingElement('row', fn (array $node) => ($node['ref'] ?? null) === 'source-caption');
 });
 
-it('starts a camera session and goes live', function () {
+it('starts a camera session and goes live at the default interval', function () {
     $component = Native::test(Scan::class)->tap('toggle-live');
 
     $session = ScanSession::sole();
@@ -100,19 +133,43 @@ it('starts a camera session and goes live', function () {
     $component->assertSee('Stop')->assertSee('Back camera')
         ->assertElement('thrifty_camera', fn (array $node) => $node['props']['scanning'] === true
             && $node['props']['facing'] === 'back'
-            && $node['props']['interval'] === 5);
+            && $node['props']['interval'] === 2);
 });
 
-it('dispatches an analysis for each captured frame', function () {
+it('dispatches an analysis with a pre-generated frame run id and the untrimmed criteria', function () {
+    app(AppSettings::class)->set(AppSettings::FindCriteria, ' Cast iron ');
     $component = Native::test(Scan::class)->tap('toggle-live');
 
     captureFrame($component)->assertSee('1/4');
 
+    $entry = scanState()->pending[array_key_last(scanState()->pending)];
+
     $this->asyncFake->assertDispatched(fn (array $dispatch) => $dispatch['work']['task'] === AnalyzeFrame::class
-        && $dispatch['work']['args'][0] === scanState()->sessionId
-        && $dispatch['work']['args'][1] === 'frames/frame.jpg'
-        && $dispatch['work']['args'][2] === '2026-09-23T10:00:00Z');
+        && $dispatch['work']['args'] === [scanState()->sessionId, 'frames/frame.jpg', '2026-09-23T10:00:00Z', $entry['frameRunId'], ' Cast iron ']);
     $this->asyncFake->assertShared(Scan::FrameAnalyzedEvent);
+    expect(strlen($entry['frameRunId']))->toBe(26);
+});
+
+it('plays the shutter and flash for camera frames', function () {
+    $component = Native::test(Scan::class)->tap('toggle-live');
+
+    captureFrame($component)
+        ->assertNativeCalled('ThriftyCamera.Shutter')
+        ->assertElement('column', fn (array $node) => ($node['ref'] ?? null) === 'snapshot-flash');
+});
+
+it('asks for an api key instead of dispatching without one', function () {
+    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, null);
+    $component = Native::test(Scan::class)->tap('toggle-live');
+
+    captureFrame($component)
+        ->assertSee('Add your OpenAI API key in Settings to start scanning.')
+        ->assertSee('0/4');
+
+    $this->asyncFake->assertNotDispatched();
+    Storage::disk('local')->assertMissing('frames/frame.jpg');
+
+    $component->tap('error-open-settings')->assertNavigatedTo('/settings');
 });
 
 it('drops frames while every analysis slot is busy', function () {
@@ -132,24 +189,6 @@ it('drops frames while every analysis slot is busy', function () {
     $this->asyncFake->assertDispatchedTimes(3);
 });
 
-it('turns the camera on instead of snapping when it is off', function () {
-    Native::test(Scan::class)
-        ->tap('snapshot')
-        ->assertNativeNotCalled('ThriftyCamera.Snapshot')
-        ->assertSee('Back camera');
-
-    expect(ScanSession::sole()->source_type)->toBe('camera')
-        ->and(scanState()->scanning)->toBeFalse();
-});
-
-it('flashes on a snapshot frame', function () {
-    $component = Native::test(Scan::class)->tap('snapshot')->tap('snapshot')
-        ->assertNativeCalled('ThriftyCamera.Snapshot');
-
-    captureFrame($component, 'snapshot')->assertElement('column', fn (array $node) => ($node['props']['ref'] ?? $node['ref'] ?? null) === 'snapshot-flash');
-    $this->asyncFake->assertDispatchedTimes(1);
-});
-
 it('does not snap while at capacity', function () {
     app(AppSettings::class)->set(AppSettings::MaxConcurrentFrames, '1');
     $component = Native::test(Scan::class)->tap('toggle-live');
@@ -160,6 +199,21 @@ it('does not snap while at capacity', function () {
     finishAnalysis($component);
     $component->tap('snapshot')->assertNativeCalled('ThriftyCamera.Snapshot',
         fn (array $params) => $params['directory'] === Storage::disk('local')->path('frames'));
+});
+
+it('turns the camera on and then snaps when the camera is off', function () {
+    $component = Native::test(Scan::class)
+        ->tap('snapshot')
+        ->assertNativeNotCalled('ThriftyCamera.Snapshot')
+        ->assertSee('Back camera');
+
+    expect(ScanSession::sole()->source_type)->toBe('camera')
+        ->and(scanState()->snapshotDueAt)->toBeGreaterThan(0.0);
+
+    scanState()->snapshotDueAt = microtime(true) - 0.1;
+    $component->firePolls()->assertNativeCalled('ThriftyCamera.Snapshot');
+
+    expect(scanState()->snapshotDueAt)->toBe(0.0);
 });
 
 it('streams finds into the feed newest first and chimes', function () {
@@ -206,29 +260,22 @@ it('shows analysis errors and clears them on the next success', function () {
     $component = Native::test(Scan::class)->tap('toggle-live');
 
     captureFrame($component, name: 'a.jpg');
-    $component->emitNative(Scan::FrameAnalyzedEvent, [
-        'id' => array_key_last(scanState()->pending),
-        'status' => 'failed',
-        'exceptionClass' => AnalysisFailed::class,
-        'message' => 'The model returned an invalid response.',
-    ])->assertSee('The model returned an invalid response.')->assertSee('0/4');
+    failAnalysis($component, AnalysisFailed::class, 'The model returned an invalid response.')
+        ->assertSee('The model returned an invalid response.')
+        ->assertSee('0/4')
+        ->assertMissingElement('pressable', fn (array $node) => ($node['ref'] ?? null) === 'error-open-settings');
 
     captureFrame($component, name: 'b.jpg');
     finishAnalysis($component)->assertDontSee('The model returned an invalid response.');
 });
 
-it('offers a path to settings when the api key is missing', function () {
+it('offers settings when an analysis reports a missing key', function () {
     $component = Native::test(Scan::class)->tap('toggle-live');
 
     captureFrame($component);
-    $component->emitNative(Scan::FrameAnalyzedEvent, [
-        'id' => array_key_last(scanState()->pending),
-        'status' => 'failed',
-        'exceptionClass' => MissingApiKey::class,
-        'message' => 'Add your OpenAI API key in Settings to start scanning.',
-    ])->assertSee('Add your OpenAI API key in Settings to start scanning.');
-
-    $component->tap('error-open-settings')->assertNavigatedTo('/settings');
+    failAnalysis($component, MissingApiKey::class, 'Add your OpenAI API key in Settings to start scanning.')
+        ->tap('error-open-settings')
+        ->assertNavigatedTo('/settings');
 });
 
 it('dismisses the error banner', function () {
@@ -241,24 +288,28 @@ it('dismisses the error banner', function () {
 });
 
 it('surfaces camera failures and stops scanning', function () {
-    $component = Native::test(Scan::class)->tap('toggle-live');
-
-    $component->emitNative(CameraFailed::class, ['message' => 'Camera access was denied.'])
-        ->assertSee('Camera access was denied.')
+    Native::test(Scan::class)->tap('toggle-live')
+        ->emitNative(CameraFailed::class, ['message' => 'Camera access is off — enable it in Settings.'])
+        ->assertSee('Camera access is off — enable it in Settings.')
         ->assertSee('Paused');
 });
 
-it('stops live scanning and ends the session', function () {
-    $component = Native::test(Scan::class)->tap('toggle-live')->tap('toggle-live');
-
-    expect(ScanSession::sole()->ended_at)->not->toBeNull()
-        ->and(scanState()->scanning)->toBeFalse()
-        ->and(scanState()->sessionId)->toBeNull();
-
-    $component->assertSee('Paused')->assertSee('Live');
-
+it('stops live scanning but keeps the session and feed', function () {
+    $item = Item::factory()->create(['name' => 'Walkman']);
+    $component = Native::test(Scan::class)->tap('toggle-live');
     captureFrame($component);
-    $this->asyncFake->assertNotDispatched();
+    finishAnalysis($component, [$item->id]);
+    $sessionId = scanState()->sessionId;
+
+    $component->tap('toggle-live')->assertSee('Paused')->assertSee('Walkman');
+
+    expect(ScanSession::find($sessionId)->ended_at)->toBeNull()
+        ->and(scanState()->sessionId)->toBe($sessionId);
+
+    $component->tap('toggle-live')->assertSee('Walkman');
+
+    expect(scanState()->sessionId)->toBe($sessionId)
+        ->and(scanState()->scanning)->toBeTrue();
 });
 
 it('switches cameras into a new session and keeps scanning', function () {
@@ -269,9 +320,43 @@ it('switches cameras into a new session and keeps scanning', function () {
         ->and(scanState()->facing)->toBe('front')
         ->and(scanState()->scanning)->toBeTrue();
 
-    $component->assertSee('Front camera')->call('turnCameraOff')->assertSee('Camera off')->assertSee('Paused');
+    $component->assertSee('Front camera')
+        ->call('turnCameraOff')
+        ->assertSee('Camera off')
+        ->assertSee('Paused')
+        ->assertMissingElement('row', fn (array $node) => ($node['ref'] ?? null) === 'source-caption');
 
     expect(ScanSession::query()->whereNull('ended_at')->count())->toBe(0);
+});
+
+it('stops scanning and clears the source when the tab is left', function () {
+    $item = Item::factory()->create(['name' => 'Walkman']);
+    $component = Native::test(Scan::class)->tap('toggle-live');
+    captureFrame($component, name: 'a.jpg');
+    finishAnalysis($component, [$item->id]);
+    captureFrame($component, name: 'b.jpg');
+    $inFlight = scanState()->pending[array_key_last(scanState()->pending)];
+    $sessionId = scanState()->sessionId;
+
+    $component->instance()->unmount();
+
+    expect(scanState()->scanning)->toBeFalse()
+        ->and(scanState()->facing)->toBe('off')
+        ->and(scanState()->sessionId)->toBeNull()
+        ->and(ScanSession::find($sessionId)->ended_at)->not->toBeNull()
+        ->and(scanState()->pending)->toHaveCount(1);
+
+    $run = FrameRun::factory()->create(['id' => $inFlight['frameRunId'], 'frame_path' => null, 'status' => FrameRunStatus::Completed]);
+    Item::factory()->create(['frame_run_id' => $run->id, 'name' => 'Eames chair']);
+    scanState()->lastRevealAt = 0;
+
+    Native::test(Scan::class)
+        ->assertSee('Paused')
+        ->assertSee('Camera off')
+        ->assertSee('Eames chair')
+        ->assertSee('Walkman')
+        ->assertSee('0/4')
+        ->assertElement('thrifty_camera', fn (array $node) => $node['props']['scanning'] === false && $node['props']['facing'] === 'off');
 });
 
 it('opens settings', function () {
@@ -284,47 +369,45 @@ it('opens the gallery picker for uploads', function () {
         ->assertNativeCalled('Camera.PickMedia', fn (array $params) => $params['mediaType'] === 'all' && $params['id'] === Scan::UploadPickerId);
 });
 
-it('analyzes an uploaded photo once', function () {
-    $source = tempnam(sys_get_temp_dir(), 'upload').'.jpg';
-    $image = imagecreatetruecolor(2000, 1000);
-    imagejpeg($image, $source);
-    $analyzedWidth = null;
-    $this->mock(FrameAnalyzer::class)->shouldReceive('analyze')->once()
-        ->andReturnUsing(function (string $sessionId, string $framePath) use (&$analyzedWidth) {
-            $analyzedWidth = getimagesizefromstring(Storage::disk('local')->get($framePath))[0];
+it('imports an uploaded HEIC photo through the plugin and analyzes it once', function () {
+    $picked = pickedTempFile('heic');
+    $component = pickMedia(Native::test(Scan::class), $picked, 'image')
+        ->assertNativeCalled('ThriftyCamera.ImportImage', fn (array $params) => $params['imagePath'] === $picked
+            && $params['directory'] === Storage::disk('local')->path('frames'))
+        ->assertSee('Uploaded photo');
 
-            return [];
-        });
+    expect(ScanSession::sole()->source_type)->toBe('image');
+    $this->asyncFake->assertNotDispatched();
 
-    $component = Native::test(Scan::class)->emitNative(MediaSelected::class, [
-        'success' => true,
-        'files' => [['path' => $source, 'mimeType' => 'image/jpeg', 'type' => 'image']],
-        'count' => 1,
-        'id' => Scan::UploadPickerId,
-    ]);
+    captureFrame($component, 'image', 'photo.jpg')->assertNativeCalled('ThriftyCamera.Shutter');
 
-    $session = ScanSession::sole();
-    $framePath = scanState()->pending[array_key_last(scanState()->pending)]['framePath'];
-
-    expect($session->source_type)->toBe('image')
-        ->and($framePath)->toStartWith('frames/')
-        ->and($analyzedWidth)->toBe(FrameImporter::MaxLongestSide);
     $this->asyncFake->assertDispatchedTimes(1);
-    $component->assertSee('Uploaded photo');
+    expect(file_exists($picked))->toBeFalse()
+        ->and(scanState()->stillPreviewPath)->toStartWith('previews/');
 
-    finishAnalysis($component);
-
-    expect($session->fresh()->ended_at)->not->toBeNull();
+    Storage::disk('local')->delete('frames/photo.jpg');
+    finishAnalysis($component)->assertElement('image', fn (array $node) => str_contains($node['props']['src'] ?? '', 'previews/'));
+    Storage::disk('local')->assertExists(scanState()->stillPreviewPath);
 });
 
-it('rejects unreadable uploads', function () {
-    Native::test(Scan::class)->emitNative(MediaSelected::class, [
-        'success' => true,
-        'files' => [['path' => '/nope/missing.heic', 'type' => 'image']],
-        'id' => Scan::UploadPickerId,
-    ])->assertSee('The selected image could not be read.');
+it('reports a photo that arrives while every slot is busy', function () {
+    app(AppSettings::class)->set(AppSettings::MaxConcurrentFrames, '1');
+    scanState()->pending['busy'] = ['sessionId' => 's', 'frameRunId' => 'r', 'dispatchedAt' => time()];
+
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('jpg'), 'image');
+    captureFrame($component, 'image', 'photo.jpg')->assertSee('Every analysis slot is busy');
 
     $this->asyncFake->assertNotDispatched();
+});
+
+it('cleans up the picked photo when the import fails', function () {
+    $picked = pickedTempFile('heic');
+
+    pickMedia(Native::test(Scan::class), $picked, 'image')
+        ->emitNative(CameraFailed::class, ['message' => 'This photo could not be read.'])
+        ->assertSee('This photo could not be read.');
+
+    expect(file_exists($picked))->toBeFalse();
 });
 
 it('ignores a cancelled picker', function () {
@@ -335,88 +418,109 @@ it('ignores a cancelled picker', function () {
     expect(ScanSession::count())->toBe(0);
 });
 
-it('extracts and analyzes video frames within the concurrency limit', function () {
+it('samples an uploaded video in real time, dropping frames at capacity', function () {
     app(AppSettings::class)->set(AppSettings::MaxConcurrentFrames, '2');
     app(AppSettings::class)->set(AppSettings::ScanIntervalSeconds, '3');
 
-    $component = Native::test(Scan::class)->emitNative(MediaSelected::class, [
-        'success' => true,
-        'files' => [['path' => '/tmp/Gallery/clip.mov', 'mimeType' => 'video/quicktime', 'type' => 'video']],
-        'id' => Scan::UploadPickerId,
-    ]);
+    $component = pickMedia(Native::test(Scan::class), '/tmp/Gallery/clip.mov', 'video');
+    $runId = scanState()->videoRunId;
 
     $component->assertNativeCalled('ThriftyCamera.ExtractVideoFrames', fn (array $params) => $params['videoPath'] === '/tmp/Gallery/clip.mov'
         && $params['intervalSeconds'] === 3
+        && $params['runId'] === $runId
         && $params['directory'] === Storage::disk('local')->path('frames'));
     expect(ScanSession::sole()->source_type)->toBe('video');
-    $component->assertSee('Uploaded video')->assertSee('Live');
+    $component->assertSee('Uploaded video')->assertSee('Stop');
 
-    foreach (['v1.jpg', 'v2.jpg', 'v3.jpg'] as $name) {
-        captureFrame($component, 'video', $name);
-    }
+    captureFrame($component, 'video', 'v1.jpg', $runId);
+    captureFrame($component, 'video', 'v2.jpg', $runId);
+    captureFrame($component, 'video', 'v3.jpg', $runId);
 
     $this->asyncFake->assertDispatchedTimes(2);
-    expect(scanState()->queue)->toHaveCount(1);
+    Storage::disk('local')->assertMissing('frames/v3.jpg');
+    expect(scanState()->stillPreviewPath)->toStartWith('previews/')
+        ->and(Storage::disk('local')->files('previews'))->toHaveCount(1);
 
-    $component->emitNative(VideoFramesExtracted::class, ['count' => 3]);
-    finishAnalysis($component);
-    $this->asyncFake->assertDispatchedTimes(3);
+    $component->emitNative(VideoFramesExtracted::class, ['count' => 3, 'runId' => $runId])->assertSee('Paused');
 
-    finishAnalysis($component);
-    expect(ScanSession::sole()->ended_at)->toBeNull();
-
-    finishAnalysis($component)->assertSee('Paused');
-    expect(ScanSession::sole()->ended_at)->not->toBeNull();
+    expect(scanState()->videoRunId)->toBeNull()
+        ->and(ScanSession::sole()->ended_at)->toBeNull();
 });
 
-it('reconciles results that arrived while another screen was active', function () {
-    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test');
+it('ignores frames and completion from another video run', function () {
+    $component = pickMedia(Native::test(Scan::class), '/tmp/Gallery/clip.mov', 'video');
+
+    captureFrame($component, 'video', 'stale.jpg', 'old-run');
+    $component->emitNative(VideoFramesExtracted::class, ['count' => 1, 'runId' => 'old-run']);
+
+    $this->asyncFake->assertNotDispatched();
+    Storage::disk('local')->assertMissing('frames/stale.jpg');
+    expect(scanState()->scanning)->toBeTrue();
+});
+
+it('cancels video extraction on stop, a new source or leaving the tab', function () {
+    $component = pickMedia(Native::test(Scan::class), '/tmp/Gallery/a.mov', 'video');
+    $first = scanState()->videoRunId;
+
+    $component->tap('toggle-live')->assertNativeCalled('ThriftyCamera.CancelVideoExtraction', fn (array $params) => $params['runId'] === $first);
+    expect(scanState()->videoRunId)->toBeNull();
+
+    pickMedia($component, '/tmp/Gallery/b.mov', 'video');
+    $second = scanState()->videoRunId;
+    pickMedia($component, pickedTempFile('jpg'), 'image')
+        ->assertNativeCalled('ThriftyCamera.CancelVideoExtraction', fn (array $params) => $params['runId'] === $second);
+
+    pickMedia($component, '/tmp/Gallery/c.mov', 'video');
+    $third = scanState()->videoRunId;
+    $component->instance()->unmount();
+
+    $this->bridge->assertCalled('ThriftyCamera.CancelVideoExtraction', fn (array $params) => $params['runId'] === $third);
+});
+
+it('keeps the camera error when a video cannot be read', function () {
+    $component = pickMedia(Native::test(Scan::class), '/tmp/Gallery/broken.mov', 'video');
+
+    $component->emitNative(CameraFailed::class, ['message' => 'This video could not be opened.'])
+        ->assertSee('Stop')
+        ->emitNative(VideoFramesExtracted::class, ['count' => 0, 'runId' => scanState()->videoRunId])
+        ->assertSee('This video could not be opened.')
+        ->assertSee('Paused');
+});
+
+it('reconciles no-find and failed runs by frame run id when Scan comes back', function () {
     $component = Native::test(Scan::class)->tap('toggle-live');
     captureFrame($component, name: 'a.jpg');
     captureFrame($component, name: 'b.jpg');
+    [$noFinds, $failed] = array_values(scanState()->pending);
 
-    $run = FrameRun::factory()->create(['frame_path' => 'frames/a.jpg', 'status' => FrameRunStatus::Completed]);
-    $item = Item::factory()->create(['frame_run_id' => $run->id, 'name' => 'Eames chair']);
-    FrameRun::factory()->create(['frame_path' => 'frames/b.jpg', 'status' => FrameRunStatus::Failed, 'error' => 'Rate limited']);
+    FrameRun::factory()->create(['id' => $noFinds['frameRunId'], 'frame_path' => null, 'status' => FrameRunStatus::Completed]);
+    FrameRun::factory()->create(['id' => $failed['frameRunId'], 'frame_path' => null, 'status' => FrameRunStatus::Failed, 'error' => 'Rate limited']);
 
-    Native::test(Scan::class)->assertSee('Eames chair')->assertSee('0/4')->assertSee('Rate limited');
+    $component->call('onResume')->assertSee('0/4')->assertSee('Rate limited');
+    $component->assertNativeNotCalled('ThriftyCamera.Chime');
+});
 
-    expect(scanState()->liveItemIds)->toBe([$item->id]);
+it('settles finished runs on a poll while Scan is showing, after a grace period', function () {
+    $component = Native::test(Scan::class)->tap('toggle-live');
+    captureFrame($component);
+    $entry = scanState()->pending[array_key_last(scanState()->pending)];
+    $run = FrameRun::factory()->create(['id' => $entry['frameRunId'], 'status' => FrameRunStatus::Completed, 'completed_at' => now()]);
+
+    scanState()->lastReconcileAt = 0;
+    $component->firePolls()->assertSee('1/4');
+
+    $run->update(['completed_at' => now()->subSeconds(Scan::SettleGraceSeconds + 1)]);
+    scanState()->lastReconcileAt = 0;
+    $component->firePolls()->assertSee('0/4');
 });
 
 it('expires analyses that never report back', function () {
-    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test');
-    scanState()->pending['lost'] = ['sessionId' => 's', 'framePath' => 'frames/lost.jpg', 'dispatchedAt' => time() - Scan::PendingExpirySeconds - 1];
-    scanState()->pending['recent'] = ['sessionId' => 's', 'framePath' => 'frames/recent.jpg', 'dispatchedAt' => time()];
+    scanState()->pending['lost'] = ['sessionId' => 's', 'frameRunId' => 'lost', 'dispatchedAt' => time() - Scan::PendingExpirySeconds - 1];
+    scanState()->pending['recent'] = ['sessionId' => 's', 'frameRunId' => 'recent', 'dispatchedAt' => time()];
 
     Native::test(Scan::class)->assertSee('1/4');
 
     expect(array_keys(scanState()->pending))->toBe(['recent']);
-});
-
-it('keeps the camera error when a video cannot be read', function () {
-    $component = Native::test(Scan::class)->emitNative(MediaSelected::class, [
-        'success' => true,
-        'files' => [['path' => '/tmp/Gallery/broken.mov', 'type' => 'video']],
-        'id' => Scan::UploadPickerId,
-    ]);
-
-    $component->emitNative(CameraFailed::class, ['message' => 'This video could not be opened.'])
-        ->emitNative(VideoFramesExtracted::class, ['count' => 0])
-        ->assertSee('This video could not be opened.')
-        ->assertSee('Paused');
-
-    expect(ScanSession::sole()->ended_at)->not->toBeNull();
-});
-
-it('settles analyses that failed for a missing api key while away', function () {
-    scanState()->pending['a'] = ['sessionId' => 's', 'framePath' => 'frames/a.jpg', 'dispatchedAt' => time()];
-
-    Native::test(Scan::class)
-        ->assertSee('0/4')
-        ->assertSee('Add your OpenAI API key in Settings to start scanning.')
-        ->tap('error-open-settings')
-        ->assertNavigatedTo('/settings');
 });
 
 it('ignores results for analyses it is not waiting on', function () {
@@ -427,13 +531,7 @@ it('ignores results for analyses it is not waiting on', function () {
 
 it('is accessible', function () {
     $component = Native::test(Scan::class)->tap('toggle-live');
-    Item::factory()->create();
-    scanState()->liveItemIds = [Item::first()->id];
-    scanState()->fail('Something went wrong');
+    scanState()->liveItemIds = [Item::factory()->create()->id];
 
     $component->call('dismissError')->assertAccessible();
-});
-
-it('is the home tab', function () {
-    Native::visit('/')->assertScreen(Scan::class)->assertHasTab('Scan')->assertTabActive('Scan');
 });

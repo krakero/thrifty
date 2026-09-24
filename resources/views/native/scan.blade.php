@@ -1,7 +1,6 @@
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
 @use('App\Enums\ScanSource')
-@use('App\Scanning\LiveScanState')
 
 <stack class="w-full h-full bg-theme-background">
     {{-- Camera stage --}}
@@ -15,9 +14,9 @@
         class="w-full h-full"
     />
 
-    @if ($state->stillPreviewPath && $state->source === ScanSource::Image->value)
-        <image src="{{ $state->stillPreviewPath }}" :fit="1" alt="Uploaded photo" class="w-full h-full bg-theme-background" />
-    @elseif ($state->facing === LiveScanState::FacingOff && $state->source !== ScanSource::Video->value)
+    @if ($stillPreview)
+        <image src="{{ $stillPreview }}" :fit="1" alt="{{ $state->sourceLabel }}" class="w-full h-full bg-theme-background" />
+    @elseif ($state->sessionId === null)
         <column class="w-full h-full items-center justify-center bg-theme-background">
             <column class="w-[98] h-[98] items-center justify-center rounded-full border border-theme-outline bg-theme-surface/40">
                 <icon :ios="Ios::Viewfinder" :android="Android::CenterFocusStrong" :size="44" class="text-theme-on-surface-variant" />
@@ -34,7 +33,7 @@
         <column class="w-full flex-1 px-4 gap-3">
             @include('native.scan.stats')
 
-            @if ($state->source)
+            @if ($state->sessionId)
                 <row ref="source-caption" class="items-center gap-1 self-start rounded-full bg-theme-background/60 px-3 py-1">
                     @if ($state->source === ScanSource::Camera->value)
                         <icon :ios="Ios::Camera" :android="Android::PhotoCamera" :size="13" class="text-theme-on-surface" />
@@ -55,9 +54,11 @@
                 </column>
             </scroll-view>
 
-            @if ($revealing)
-                {{-- Re-render every half second while finds are still streaming in. --}}
+            {{-- Re-render ticks: finds still streaming in, a snapshot waiting on the camera, analyses to check on. --}}
+            @if ($revealing || $snapshotPending)
                 <spacer native:poll="500ms" class="h-[0]" />
+            @elseif ($state->inFlight() > 0)
+                <spacer native:poll="5s" class="h-[0]" />
             @endif
 
             @include('native.scan.error')

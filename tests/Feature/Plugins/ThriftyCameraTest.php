@@ -211,6 +211,16 @@ it('cancels a video extraction by run id', function () {
     $bridge->assertCalled('ThriftyCamera.CancelVideoExtraction', fn (array $params) => $params === ['runId' => 'run-1']);
 });
 
+it('changes the interval of a running video extraction', function () {
+    $bridge = Native::fakeBridge();
+
+    ThriftyCamera::setVideoFrameInterval('run-1', 5);
+    ThriftyCamera::setVideoFrameInterval('run-1', 0);
+
+    $bridge->assertCalled('ThriftyCamera.SetVideoFrameInterval', fn (array $params) => $params === ['runId' => 'run-1', 'intervalSeconds' => 5]);
+    $bridge->assertCalled('ThriftyCamera.SetVideoFrameInterval', fn (array $params) => $params === ['runId' => 'run-1', 'intervalSeconds' => 1]);
+});
+
 it('calls the shutter bridge method', function () {
     $bridge = Native::fakeBridge();
 
@@ -396,6 +406,7 @@ it('keeps the manifest, the facade and the swift bridge classes in sync', functi
     ThriftyCamera::snapshot('/tmp');
     ThriftyCamera::extractVideoFrames('/tmp/v.mov', 2, '/tmp');
     ThriftyCamera::cancelVideoExtraction('run');
+    ThriftyCamera::setVideoFrameInterval('run', 3);
     ThriftyCamera::videoRunStatus('run');
     ThriftyCamera::importImage('/tmp/i.heic', '/tmp');
     ThriftyCamera::shutter();

@@ -36,6 +36,11 @@
             "description": "Cancel a running video extraction by runId (it still ends with VideoFramesExtracted)"
         },
         {
+            "name": "ThriftyCamera.SetVideoFrameInterval",
+            "ios": "ThriftyCameraFunctions.SetVideoFrameInterval",
+            "description": "Change the sampling interval of a running video extraction from the next sample onwards (no-op for unknown or finished runs)"
+        },
+        {
             "name": "ThriftyCamera.VideoRunStatus",
             "ios": "ThriftyCameraFunctions.VideoRunStatus",
             "description": "Whether a video extraction run is still active and how many frames it has emitted (synchronous)"

@@ -41,6 +41,7 @@ use Thrifty\Camera\Facades\ThriftyCamera;
 ThriftyCamera::snapshot($directory);
 $runId = ThriftyCamera::extractVideoFrames($videoPath, $intervalSeconds, $directory);
 ThriftyCamera::cancelVideoExtraction($runId);
+ThriftyCamera::setVideoFrameInterval($runId, $seconds); // next frame $seconds from now, then every $seconds
 ThriftyCamera::importImage($imagePath, $directory);
 ThriftyCamera::shutter(); // snapshot click + light haptic
 ThriftyCamera::chime(); // find chime + success haptic

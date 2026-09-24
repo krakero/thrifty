@@ -40,6 +40,19 @@ class ThriftyCamera
     }
 
     /**
+     * Change how often a running video extraction samples, like changing the
+     * web's scan interval mid-video: the next frame comes $seconds after the
+     * change, then every $seconds. A no-op for unknown or finished runs.
+     */
+    public function setVideoFrameInterval(string $runId, int $seconds): void
+    {
+        $this->call('ThriftyCamera.SetVideoFrameInterval', [
+            'runId' => $runId,
+            'intervalSeconds' => max(1, $seconds),
+        ]);
+    }
+
+    /**
      * Stop a running video extraction. It still ends with VideoFramesExtracted.
      */
     public function cancelVideoExtraction(string $runId): void

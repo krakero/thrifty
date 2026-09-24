@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static void snapshot(string $directory)
  * @method static string extractVideoFrames(string $videoPath, int $intervalSeconds, string $directory)
  * @method static void cancelVideoExtraction(string $runId)
+ * @method static void setVideoFrameInterval(string $runId, int $seconds)
  * @method static array{active: bool, framesEmitted: int} videoRunStatus(string $runId)
  * @method static list<\Thrifty\Camera\Events\FrameCaptured|\Thrifty\Camera\Events\VideoFramesExtracted|\Thrifty\Camera\Events\CameraFailed> takeVideoEvents(string $runId)
  * @method static void forgetVideoRun(string $runId)

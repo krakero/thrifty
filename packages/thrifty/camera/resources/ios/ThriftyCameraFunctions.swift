@@ -85,6 +85,23 @@ enum ThriftyCameraFunctions {
         }
     }
 
+    // MARK: - ThriftyCamera.SetVideoFrameInterval
+
+    /// Changes a running video run's sampling interval: the next frame comes
+    /// `intervalSeconds` after the change (like the web restarting its timer),
+    /// then every `intervalSeconds`. A no-op for unknown or finished runs.
+    class SetVideoFrameInterval: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            guard let runId = parameters["runId"] as? String, !runId.isEmpty else {
+                throw BridgeError.invalidParameters("runId is required")
+            }
+
+            let interval = max(1, (parameters["intervalSeconds"] as? NSNumber)?.doubleValue ?? 2)
+
+            return ["updated": ThriftyVideoFrameExtractor.setInterval(runId: runId, seconds: interval)]
+        }
+    }
+
     // MARK: - ThriftyCamera.VideoRunStatus
 
     /// Whether a video extraction run is still active and how many frames it
@@ -251,6 +268,7 @@ enum ThriftyVideoFrameExtractor {
 
     private static let lock = NSLock()
     private static var runs: [String: Task<Void, Never>] = [:]
+    private static var pacing: [String: ThriftyVideoPacing] = [:]
 
     /// Frames emitted per run, kept after the run ends (most recent runs only).
     private static var framesEmitted: [String: Int] = [:]
@@ -263,15 +281,32 @@ enum ThriftyVideoFrameExtractor {
 
         runs[runId]?.cancel()
         rememberRun(runId)
+
+        let runPacing = ThriftyVideoPacing(interval: interval)
+        pacing[runId] = runPacing
+
         runs[runId] = Task.detached(priority: .userInitiated) {
-            let count = await extract(runId: runId, videoPath: videoPath, interval: interval, directory: directory)
+            let count = await extract(runId: runId, videoPath: videoPath, pacing: runPacing, directory: directory)
 
             ThriftyCameraEvents.videoFramesExtracted(count: count, runId: runId)
 
             lock.withLock {
                 runs[runId] = nil
+                pacing[runId] = nil
             }
         }
+    }
+
+    /// Returns false (and does nothing) for unknown or finished runs.
+    @discardableResult
+    static func setInterval(runId: String, seconds: Double) -> Bool {
+        guard let runPacing = lock.withLock({ pacing[runId] }) else {
+            return false
+        }
+
+        runPacing.change(to: seconds)
+
+        return true
     }
 
     static func status(runId: String) -> (active: Bool, framesEmitted: Int) {
@@ -314,7 +349,7 @@ enum ThriftyVideoFrameExtractor {
     }
 
     /// Returns the number of frames emitted.
-    private static func extract(runId: String, videoPath: String, interval: Double, directory: String) async -> Int {
+    private static func extract(runId: String, videoPath: String, pacing: ThriftyVideoPacing, directory: String) async -> Int {
         let url = ThriftyImageImporter.fileURL(videoPath)
 
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -370,9 +405,20 @@ enum ThriftyVideoFrameExtractor {
         while !Task.isCancelled {
             // Sleep until the next sample, or until the video ends if that
             // comes first, so the run ends exactly at the end of the video.
-            let target = min(nextSampleAt, duration)
+            // Wakes in short steps so an interval change applies right away.
             do {
-                try await clock.sleep(until: target)
+                while true {
+                    if pacing.takeChange() {
+                        nextSampleAt = clock.elapsed + pacing.interval
+                    }
+
+                    let target = min(nextSampleAt, duration)
+                    if clock.elapsed >= target {
+                        break
+                    }
+
+                    try await clock.sleep(until: min(target, clock.elapsed + 0.25))
+                }
             } catch {
                 break
             }
@@ -383,6 +429,7 @@ enum ThriftyVideoFrameExtractor {
                 break
             }
 
+            let interval = pacing.interval
             nextSampleAt += interval
             while nextSampleAt <= clock.elapsed {
                 nextSampleAt += interval
@@ -535,5 +582,35 @@ final class ThriftyFindCardItemSource: NSObject, UIActivityItemSource {
         metadata.imageProvider = NSItemProvider(object: image)
 
         return metadata
+    }
+}
+
+/// A video run's sampling interval, changeable while it runs.
+final class ThriftyVideoPacing {
+    private let lock = NSLock()
+    private var currentInterval: Double
+    private var changed = false
+
+    init(interval: Double) {
+        currentInterval = max(1, interval)
+    }
+
+    var interval: Double {
+        lock.withLock { currentInterval }
+    }
+
+    func change(to seconds: Double) {
+        lock.withLock {
+            currentInterval = max(1, seconds)
+            changed = true
+        }
+    }
+
+    /// True once after each change.
+    func takeChange() -> Bool {
+        lock.withLock {
+            defer { changed = false }
+            return changed
+        }
     }
 }

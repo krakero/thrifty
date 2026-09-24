@@ -63,7 +63,7 @@
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface py-2">{{ $scanError }}</text>
                     @if ($scanErrorNeedsApiKey)
-                        <button ref="scan-error-settings" variant="secondary" @press="openSettings">Settings</button>
+                        <button ref="scan-error-settings" variant="secondary" size="lg" @press="openSettings">Settings</button>
                     @endif
                     <thrifty-pressable ref="dismiss-scan-error" @press="dismissScanError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
@@ -75,7 +75,7 @@
                 <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 pl-3 py-1">
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface py-2">{{ $error }}</text>
-                    <button ref="retry-history" variant="secondary" @press="retry">Retry</button>
+                    <button ref="retry-history" variant="secondary" size="lg" @press="retry">Retry</button>
                     <thrifty-pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
                     </thrifty-pressable>

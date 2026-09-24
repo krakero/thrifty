@@ -15,7 +15,7 @@
         <text class="text-sm text-theme-on-surface-variant text-center">
             {{ $item === null ? 'It may have been deleted.' : 'Agent activity was not recorded for this older find.' }}
         </text>
-        <button ref="go-back" variant="secondary" @navigate.back>Go back</button>
+        <button ref="go-back" variant="secondary" size="lg" @navigate.back>Go back</button>
     </column>
 @else
     @php

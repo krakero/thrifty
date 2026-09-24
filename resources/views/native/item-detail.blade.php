@@ -17,7 +17,7 @@
         <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="36" class="text-theme-on-surface-variant" />
         <text font="display" class="text-xl text-theme-on-background text-center">Find not found.</text>
         <text class="text-sm text-theme-on-surface-variant text-center">It may have been deleted.</text>
-        <button ref="go-back" variant="secondary" @navigate.back>Go back</button>
+        <button ref="go-back" variant="secondary" size="lg" @navigate.back>Go back</button>
     </column>
 @else
     <scroll-view class="w-full h-full bg-theme-background">

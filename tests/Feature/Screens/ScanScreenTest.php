@@ -20,6 +20,7 @@ use Native\Mobile\Testing\Native;
 use Thrifty\Camera\Events\CameraFailed;
 use Thrifty\Camera\Events\FrameCaptured;
 use Thrifty\Camera\Events\VideoFramesExtracted;
+use Thrifty\Camera\VideoRunJournal;
 
 beforeEach(function () {
     Storage::fake('local');
@@ -27,10 +28,13 @@ beforeEach(function () {
     $this->bridge = Native::fakeBridge();
     $this->mock(FrameAnalyzer::class)->shouldReceive('analyze')->andReturn([]);
     app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test');
+    $this->journalPath = sys_get_temp_dir().'/thrifty-video-runs-'.uniqid().'.json';
+    app()->instance(VideoRunJournal::class, new VideoRunJournal($this->journalPath));
 });
 
 afterEach(function () {
     AsyncTask::clearFake();
+    @unlink($this->journalPath);
 });
 
 function scanState(): LiveScanState
@@ -663,6 +667,28 @@ it('keeps a watchdog-timed-out analysis until its frame run lands, then shows an
         ->assertSee('0/4')
         ->assertSee('Late lamp')
         ->assertNativeCalled('ThriftyCamera.Chime');
+});
+
+it('catches up on video frames and completion delivered while another screen was on top', function () {
+    app(AppSettings::class)->set(AppSettings::MaxConcurrentFrames, '2');
+    $picked = pickedTempFile('mov');
+    $component = pickMedia(Native::test(Scan::class), $picked, 'video');
+    $runId = scanState()->videoRunId;
+
+    $settings = Native::test(Settings::class);
+    captureFrame($settings, 'video', 'v1.jpg', $runId);
+    captureFrame($settings, 'video', 'v2.jpg', $runId);
+    captureFrame($settings, 'video', 'v3.jpg', $runId);
+    $settings->emitNative(VideoFramesExtracted::class, ['count' => 3, 'runId' => $runId]);
+
+    $this->asyncFake->assertNotDispatched();
+
+    $component->call('onResume')->assertSee('Paused')->assertSee('2/2');
+
+    $this->asyncFake->assertDispatchedTimes(2);
+    Storage::disk('local')->assertMissing('frames/v3.jpg');
+    expect(scanState()->videoRunId)->toBeNull()
+        ->and(file_exists($picked))->toBeFalse();
 });
 
 it('ignores results for analyses it is not waiting on', function () {

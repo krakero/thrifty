@@ -62,11 +62,13 @@ class Scan extends NativeComponent
     {
         $state = $this->state();
         app(FrameFiles::class)->sweep(array_filter([$state->stillPreviewPath]), array_keys($state->pendingImports));
+        $this->drainVideoRun();
         $this->reconcile(settleRecent: true);
     }
 
     public function onResume(): void
     {
+        $this->drainVideoRun();
         $this->reconcile(settleRecent: true);
     }
 
@@ -165,6 +167,12 @@ class Scan extends NativeComponent
         ?float $videoSeconds = null,
         ?string $runId = null,
     ): void {
+        if ($source === 'video') {
+            $this->videoEventArrived($runId, $path);
+
+            return;
+        }
+
         $state = $this->state();
         $files = app(FrameFiles::class);
         $framePath = FrameFiles::relativePath($path);
@@ -177,11 +185,9 @@ class Scan extends NativeComponent
             }
         }
 
-        $accepted = match ($source) {
-            'image' => $state->source === ScanSource::Image->value,
-            'video' => $state->source === ScanSource::Video->value && $runId !== null && $runId === $state->videoRunId,
-            default => $state->source === ScanSource::Camera->value,
-        };
+        $accepted = $source === 'image'
+            ? $state->source === ScanSource::Image->value
+            : $state->source === ScanSource::Camera->value;
 
         if (! $accepted || $state->sessionId === null) {
             $files->delete($framePath);
@@ -189,7 +195,7 @@ class Scan extends NativeComponent
             return;
         }
 
-        if ($source === 'image' || $source === 'video') {
+        if ($source === 'image') {
             $this->showStill($framePath);
         }
 
@@ -215,20 +221,7 @@ class Scan extends NativeComponent
     #[On(VideoFramesExtracted::class)]
     public function videoFramesExtracted(int $count, ?string $runId = null): void
     {
-        $state = $this->state();
-
-        if ($runId === null || $runId !== $state->videoRunId) {
-            return;
-        }
-
-        $state->videoRunId = null;
-        $state->scanning = false;
-        app(FrameFiles::class)->deletePicked($state->pickedMediaPath);
-        $state->pickedMediaPath = null;
-
-        if ($count === 0 && $state->error === null) {
-            $state->fail('No frames could be read from this video.');
-        }
+        $this->videoEventArrived($runId);
     }
 
     /**
@@ -239,7 +232,9 @@ class Scan extends NativeComponent
     {
         $state = $this->state();
 
-        if ($runId !== null && $runId !== $state->videoRunId) {
+        if ($runId !== null) {
+            $this->videoEventArrived($runId);
+
             return;
         }
 
@@ -248,7 +243,6 @@ class Scan extends NativeComponent
         if ($state->source === ScanSource::Image->value && $state->pendingImports !== []) {
             $this->abandonImports($state->sessionId);
         } elseif ($state->videoRunId === null) {
-            // A failed video extraction is still followed by VideoFramesExtracted, which winds it down.
             $state->scanning = false;
         }
 
@@ -393,6 +387,7 @@ class Scan extends NativeComponent
 
         if ($state->videoRunId !== null) {
             ThriftyCamera::cancelVideoExtraction($state->videoRunId);
+            ThriftyCamera::forgetVideoRun($state->videoRunId);
             $state->videoRunId = null;
         }
 
@@ -505,6 +500,88 @@ class Scan extends NativeComponent
             app(AppSettings::class)->scanIntervalSeconds(),
             FrameFiles::framesDirectory(),
         );
+    }
+
+    /**
+     * A video run's events reach whichever screen is active, and the plugin journals them per run, so Scan
+     * consumes the current run from the journal rather than from the event itself. That way frames and the final
+     * VideoFramesExtracted that arrived while a find or Settings was on top are caught up on, in order.
+     */
+    private function videoEventArrived(?string $runId, ?string $framePath = null): void
+    {
+        if ($runId !== null && $runId === $this->state()->videoRunId) {
+            $this->drainVideoRun();
+
+            return;
+        }
+
+        // A run that is no longer current (cancelled or replaced): discard what it sends.
+        if ($framePath !== null) {
+            app(FrameFiles::class)->delete(FrameFiles::relativePath($framePath));
+        }
+
+        if ($runId !== null) {
+            ThriftyCamera::forgetVideoRun($runId);
+        }
+    }
+
+    private function drainVideoRun(): void
+    {
+        $runId = $this->state()->videoRunId;
+
+        if ($runId === null) {
+            return;
+        }
+
+        foreach (ThriftyCamera::takeVideoEvents($runId) as $event) {
+            match (true) {
+                $event instanceof FrameCaptured => $this->acceptVideoFrame($event),
+                $event instanceof CameraFailed => $this->state()->fail($event->message),
+                $event instanceof VideoFramesExtracted => $this->finishVideoRun($event->count),
+            };
+        }
+    }
+
+    /**
+     * Video frames follow the live-frame rules: shown on the stage, dropped at capacity, with the shutter and flash.
+     */
+    private function acceptVideoFrame(FrameCaptured $event): void
+    {
+        $state = $this->state();
+        $files = app(FrameFiles::class);
+        $framePath = FrameFiles::relativePath($event->path);
+
+        if ($state->sessionId === null || $state->source !== ScanSource::Video->value) {
+            $files->delete($framePath);
+
+            return;
+        }
+
+        $this->showStill($framePath);
+
+        if ($this->atCapacity()) {
+            $files->delete($framePath);
+
+            return;
+        }
+
+        $state->flashAt = microtime(true);
+        ThriftyCamera::shutter();
+
+        $this->analyze($state->sessionId, $framePath, $event->capturedAt);
+    }
+
+    private function finishVideoRun(int $count): void
+    {
+        $state = $this->state();
+        $state->videoRunId = null;
+        $state->scanning = false;
+        app(FrameFiles::class)->deletePicked($state->pickedMediaPath);
+        $state->pickedMediaPath = null;
+
+        if ($count === 0 && $state->error === null) {
+            $state->fail('No frames could be read from this video.');
+        }
     }
 
     private function showStill(string $framePath): void

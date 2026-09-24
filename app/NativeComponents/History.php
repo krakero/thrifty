@@ -6,6 +6,7 @@ use App\Models\AppStat;
 use App\Models\Item;
 use App\Queries\HistoryQuery;
 use App\Queries\HistoryQueryException;
+use App\Scanning\FrameResults;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\View\View;
 use Native\Mobile\Attributes\On;
@@ -57,8 +58,10 @@ class History extends NativeComponent
      * @param  array<string, mixed>|null  $result
      */
     #[On(Scan::FrameAnalyzedEvent)]
-    public function frameAnalyzed(string $id, string $status, mixed $result = null): void
+    public function frameAnalyzed(string $id, string $status, mixed $result = null, ?string $exceptionClass = null, ?string $message = null): void
     {
+        app(FrameResults::class)->handle($id, $status, $result, $exceptionClass, $message);
+
         if ($status === 'finished' && is_array($result) && ($result['itemIds'] ?? []) !== []) {
             $this->reload(keepLoaded: true);
         }

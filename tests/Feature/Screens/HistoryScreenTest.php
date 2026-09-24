@@ -5,6 +5,7 @@ use App\Models\Item;
 use App\NativeComponents\History;
 use App\NativeComponents\Layouts\TabsLayout;
 use App\NativeComponents\Scan;
+use App\Scanning\LiveScanState;
 use Illuminate\Support\Facades\DB;
 use Native\Mobile\Testing\Native;
 
@@ -149,4 +150,17 @@ it('picks up finds from frames that finish while history is showing', function (
         ->assertDontSee('Background find')
         ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-3', 'status' => 'finished', 'result' => ['itemIds' => [$find->id]]])
         ->assertSee('Background find');
+});
+
+it('settles scan analyses that finish while History is showing', function () {
+    $newFind = Item::factory()->create();
+    $state = app(LiveScanState::class);
+    $state->pending['task-1'] = ['sessionId' => 'session', 'frameRunId' => 'run', 'dispatchedAt' => time()];
+
+    Native::test(History::class)
+        ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-1', 'status' => 'finished', 'result' => ['itemIds' => [$newFind->id]]])
+        ->assertSee($newFind->name)
+        ->assertNativeCalled('ThriftyCamera.Chime');
+
+    expect($state->pending)->toBe([]);
 });

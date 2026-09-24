@@ -24,6 +24,11 @@
             "description": "Sample a video every N seconds into JPEG frames (async, emits FrameCaptured per frame then VideoFramesExtracted)"
         },
         {
+            "name": "ThriftyCamera.ImportImage",
+            "ios": "ThriftyCameraFunctions.ImportImage",
+            "description": "Decode a picked image (HEIC/PNG/JPEG/WebP), apply orientation, downscale to a JPEG frame (async, emits FrameCaptured with source image)"
+        },
+        {
             "name": "ThriftyCamera.Chime",
             "ios": "ThriftyCameraFunctions.Chime",
             "description": "Play the find chime and a success haptic"

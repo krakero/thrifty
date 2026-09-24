@@ -81,6 +81,27 @@ it('never sends an interval below one second', function () {
     $bridge->assertCalled('ThriftyCamera.ExtractVideoFrames', fn (array $params) => $params['intervalSeconds'] === 1);
 });
 
+it('calls the image import bridge method', function () {
+    $bridge = Native::fakeBridge();
+
+    ThriftyCamera::importImage('/tmp/IMG_0001.HEIC', '/tmp/frames');
+
+    $bridge->assertCalled('ThriftyCamera.ImportImage', fn (array $params) => $params === [
+        'imagePath' => '/tmp/IMG_0001.HEIC',
+        'directory' => '/tmp/frames',
+    ]);
+});
+
+it('delivers imported image frames to on handlers', function () {
+    Native::test(ThriftyCameraFixtureScreen::class)
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/picked.jpg', 'source' => 'image', 'width' => 960, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z',
+        ])
+        ->assertSet('frames', [
+            ['path' => '/frames/picked.jpg', 'source' => 'image', 'width' => 960, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => null],
+        ]);
+});
+
 it('calls the chime bridge method', function () {
     $bridge = Native::fakeBridge();
 

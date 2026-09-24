@@ -27,6 +27,19 @@ class ThriftyCamera
     }
 
     /**
+     * Normalize a picked image (HEIC/HEIF/PNG/JPEG/WebP) into a JPEG frame:
+     * EXIF orientation applied, longest side at most 1280px, quality 0.7.
+     * Asynchronous: emits FrameCaptured with source "image", or CameraFailed.
+     */
+    public function importImage(string $imagePath, string $directory): void
+    {
+        $this->call('ThriftyCamera.ImportImage', [
+            'imagePath' => $imagePath,
+            'directory' => $directory,
+        ]);
+    }
+
+    /**
      * Play the find chime together with a success haptic.
      */
     public function chime(): void

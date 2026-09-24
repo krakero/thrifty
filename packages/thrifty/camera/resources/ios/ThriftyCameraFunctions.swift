@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import ImageIO
 import UIKit
 
 // MARK: - ThriftyCamera Function Namespace
@@ -43,6 +44,27 @@ enum ThriftyCameraFunctions {
 
             Task.detached(priority: .userInitiated) {
                 await ThriftyVideoFrameExtractor.extract(videoPath: videoPath, interval: interval, directory: directory)
+            }
+
+            return ["started": true]
+        }
+    }
+
+    // MARK: - ThriftyCamera.ImportImage
+
+    /// Normalizes a picked image into a JPEG frame in `directory` (source "image").
+    class ImportImage: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            guard let imagePath = parameters["imagePath"] as? String, !imagePath.isEmpty else {
+                throw BridgeError.invalidParameters("imagePath is required")
+            }
+
+            guard let directory = parameters["directory"] as? String, !directory.isEmpty else {
+                throw BridgeError.invalidParameters("directory is required")
+            }
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                ThriftyImageImporter.importImage(imagePath: imagePath, directory: directory)
             }
 
             return ["started": true]
@@ -93,16 +115,60 @@ enum ThriftyCameraFunctions {
     }
 }
 
+// MARK: - Image import
+
+enum ThriftyImageImporter {
+    /// Decodes anything ImageIO understands (HEIC/HEIF, PNG, JPEG, WebP, …),
+    /// applies the EXIF orientation and downscales in a single pass, then
+    /// writes the result through the shared frame writer.
+    static func importImage(imagePath: String, directory: String) {
+        let url = fileURL(imagePath)
+
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            ThriftyCameraEvents.cameraFailed("Couldn't find that image.")
+            return
+        }
+
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              CGImageSourceGetCount(source) > 0 else {
+            ThriftyCameraEvents.cameraFailed("That file isn't an image Thrifty can read.")
+            return
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: Int(ThriftyFrameWriter.maxDimension),
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            ThriftyCameraEvents.cameraFailed("Couldn't decode that image. Try a JPEG, PNG or HEIC photo.")
+            return
+        }
+
+        do {
+            let frame = try ThriftyFrameWriter.write(cgImage: image, to: directory)
+            ThriftyCameraEvents.frameCaptured(frame, source: "image")
+        } catch {
+            ThriftyCameraEvents.cameraFailed("Couldn't save that image: \(error.localizedDescription)")
+        }
+    }
+
+    static func fileURL(_ path: String) -> URL {
+        if path.hasPrefix("file://"), let url = URL(string: path) {
+            return url
+        }
+
+        return URL(fileURLWithPath: path)
+    }
+}
+
 // MARK: - Video frame extraction
 
 enum ThriftyVideoFrameExtractor {
     static func extract(videoPath: String, interval: Double, directory: String) async {
-        let url: URL
-        if videoPath.hasPrefix("file://"), let fileURL = URL(string: videoPath) {
-            url = fileURL
-        } else {
-            url = URL(fileURLWithPath: videoPath)
-        }
+        let url = ThriftyImageImporter.fileURL(videoPath)
 
         guard FileManager.default.fileExists(atPath: url.path) else {
             ThriftyCameraEvents.cameraFailed("Couldn't find that video.")

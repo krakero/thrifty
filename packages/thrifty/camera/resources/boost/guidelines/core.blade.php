@@ -1,6 +1,6 @@
 ## thrifty/camera
 
-iOS-only camera plugin for Thrifty: live scanning preview, snapshots, video frame extraction, the find chime and share cards.
+iOS-only camera plugin for Thrifty: live scanning preview, snapshots, video frame extraction, picked-image import, the find chime and share cards.
 
 ### Live preview element
 
@@ -22,6 +22,7 @@ use Thrifty\Camera\Facades\ThriftyCamera;
 
 ThriftyCamera::snapshot($directory);
 ThriftyCamera::extractVideoFrames($videoPath, $intervalSeconds, $directory);
+ThriftyCamera::importImage($imagePath, $directory);
 ThriftyCamera::chime();
 ThriftyCamera::shareFindCard(['title' => '…', 'subtitle' => '…', 'imagePath' => '/abs/frame.jpg', 'box' => null, 'rows' => [], 'summary' => '…']);
 </code-snippet>
@@ -44,6 +45,7 @@ public function frameCaptured(string $path, string $source, int $width, int $hei
 </code-snippet>
 @endverbatim
 
-- `FrameCaptured` — `source` is `live`, `snapshot` or `video`; `videoSeconds` is only sent for video frames.
+- `FrameCaptured` — `source` is `live`, `snapshot`, `video` or `image`; `videoSeconds` is only sent for video frames.
+- `importImage()` accepts anything iOS decodes (HEIC/HEIF, PNG, JPEG, WebP), applies EXIF orientation and writes a ≤1280px JPEG (q 0.7), so on-device PHP never has to read HEIC. Use it for gallery picks before analysis.
 - `VideoFramesExtracted(int $count)` — fires after the last video frame (also after a failed extraction, with the count so far).
 - `CameraFailed(string $message)` — user-presentable message (permission denied, no camera, unreadable video, etc.).

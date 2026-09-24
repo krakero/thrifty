@@ -10,7 +10,7 @@ class FrameCaptured
 
     /**
      * @param  string  $path  Absolute JPEG path inside the requested frames directory.
-     * @param  string  $source  One of "live", "snapshot" or "video".
+     * @param  string  $source  One of "live", "snapshot", "video" or "image".
      * @param  string  $capturedAt  ISO-8601 timestamp.
      * @param  float|null  $videoSeconds  Position within the video, for video frames.
      */

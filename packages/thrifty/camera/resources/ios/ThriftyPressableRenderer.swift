@@ -37,6 +37,9 @@ struct ThriftyPressableRenderer: View {
         if props.getBool("has_menu") {
             let items = node.children.filter { $0.type == "top_bar_action" }
 
+            // A Menu is exposed as a pop-up button that ignores modifiers
+            // wrapping it in a new element, so the label goes on the label
+            // content (which the pop-up button reads) and on the Menu itself.
             Menu {
                 ForEach(items) { item in
                     ThriftyPressableMenuItem(item: item)
@@ -44,9 +47,10 @@ struct ThriftyPressableRenderer: View {
             } label: {
                 NativeUIColumnRenderer(node: node)
                     .contentShape(Rectangle())
+                    .modifier(ThriftyMenuLabelAccessibility(label: a11yLabel))
             }
             .buttonStyle(feedback)
-            .modifier(ThriftyPressableAccessibility(label: a11yLabel, hint: a11yHint, onActivate: nil, onHold: nil))
+            .modifier(ThriftyMenuAccessibility(label: a11yLabel, hint: a11yHint))
         } else {
             ThriftyPressableButton(
                 node: node,
@@ -167,6 +171,47 @@ private struct ThriftyPressableAccessibility: ViewModifier {
             content
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(label))
+        }
+    }
+}
+
+/// The Menu's label content: one element carrying the label (or the
+/// children's text combined when there is none).
+private struct ThriftyMenuLabelAccessibility: ViewModifier {
+    let label: String
+
+    func body(content: Content) -> some View {
+        if label.isEmpty {
+            content.accessibilityElement(children: .combine)
+        } else {
+            content
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(Text(label))
+        }
+    }
+}
+
+/// Label and hint on the Menu's own pop-up button element, without
+/// replacing it (so it keeps its pop-up trait and opens the menu).
+private struct ThriftyMenuAccessibility: ViewModifier {
+    let label: String
+    let hint: String
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(ThriftyOptionalLabel(label: label))
+            .accessibilityHint(hint.isEmpty ? Text("") : Text(hint))
+    }
+}
+
+private struct ThriftyOptionalLabel: ViewModifier {
+    let label: String
+
+    func body(content: Content) -> some View {
+        if label.isEmpty {
+            content
+        } else {
+            content.accessibilityLabel(Text(label))
         }
     }
 }

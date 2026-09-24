@@ -193,6 +193,13 @@ enum ThriftyCameraError: LocalizedError {
             print("[ThriftyCamera] Underlying error: \(error)")
         }
 
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .denied, .restricted:
+            return ThriftyCameraError.permissionDenied.localizedDescription
+        default:
+            break
+        }
+
         guard hasCamera else {
             return ThriftyCameraError.cameraUnavailable.localizedDescription
         }

@@ -125,17 +125,17 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     /// it on), the snapshot waits briefly for the first frame.
     func requestSnapshot(directory: String) {
         sessionQueue.async {
-            guard ThriftyCameraError.hasCamera else {
-                ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
-                return
-            }
-
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .denied, .restricted:
                 ThriftyCameraEvents.cameraFailed(ThriftyCameraError.permissionDenied.localizedDescription)
                 return
             default:
                 break
+            }
+
+            guard ThriftyCameraError.hasCamera else {
+                ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
+                return
             }
 
             let snapshot = PendingSnapshot(id: UUID(), directory: directory)
@@ -185,12 +185,8 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             return
         }
 
-        // The simulator has no camera: never configure or start capture there.
-        guard ThriftyCameraError.hasCamera else {
-            reportMissingCamera()
-            return
-        }
-
+        // Permission first, so a denied or restricted camera says so even
+        // on the simulator; "no camera" is only for authorized-but-absent.
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
             break
@@ -205,6 +201,12 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             return
         default:
             reportPermissionProblem()
+            return
+        }
+
+        // The simulator has no camera: never configure or start capture there.
+        guard ThriftyCameraError.hasCamera else {
+            reportMissingCamera()
             return
         }
 

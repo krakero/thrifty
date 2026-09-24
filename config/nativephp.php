@@ -206,6 +206,10 @@ return [
         'storage/framework/cache',
         'storage/framework/testing',
         'storage/logs/laravel.log',
+        'storage/framework/thrifty-camera',
+        'storage/app/frames',
+        'storage/app/thumbs',
+        'storage/app/previews',
     ],
 
     /*

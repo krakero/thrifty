@@ -4,6 +4,7 @@ use App\Models\AppStat;
 use App\Models\Item;
 use App\NativeComponents\History;
 use App\NativeComponents\Layouts\TabsLayout;
+use Illuminate\Support\Facades\DB;
 use Native\Mobile\Testing\Native;
 
 it('shows the heading, stats and saved finds newest first', function () {
@@ -102,4 +103,36 @@ it('opens settings and item details', function () {
     Native::test(History::class)
         ->tap("item-card-{$item->id}")
         ->assertNavigatedTo("/finds/{$item->id}?from=history");
+});
+
+it('keeps every loaded page when returning to history', function () {
+    Item::factory()->count(150)->create(['last_seen_at' => now()->subHour()]);
+
+    $screen = Native::test(History::class)->tap('load-more');
+    expect($screen->get('itemIds'))->toHaveCount(150);
+
+    $deleted = Item::query()->latestSeen()->first();
+    $deleted->delete();
+    Item::factory()->create(['name' => 'Fresh find', 'last_seen_at' => now()]);
+
+    $screen->instance()->onResume();
+    $screen->call('dismissError')->assertSee('Fresh find');
+
+    expect($screen->get('itemIds'))->toHaveCount(150)
+        ->not->toContain($deleted->id)
+        ->and($screen->get('nextCursor'))->toBeNull();
+});
+
+it('renders loaded finds without re-querying them', function () {
+    Item::factory()->count(3)->create();
+    $screen = Native::test(History::class);
+
+    $itemQueries = 0;
+    DB::listen(function ($query) use (&$itemQueries) {
+        $itemQueries += str_contains($query->sql, 'from "items"') ? 1 : 0;
+    });
+
+    $screen->call('dismissError');
+
+    expect($itemQueries)->toBe(0);
 });

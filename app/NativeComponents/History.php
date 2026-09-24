@@ -28,14 +28,25 @@ class History extends NativeComponent
     /** Whether the last failure was while loading a further page (Retry then loads that page again). */
     public bool $failedLoadingMore = false;
 
+    /**
+     * The loaded finds in display order, so a render doesn't re-query them.
+     *
+     * @var Collection<int, Item>|null
+     */
+    private ?Collection $items = null;
+
     public function mount(): void
     {
         $this->reload();
     }
 
+    /**
+     * Coming back (from a find, Settings or the Scan tab) re-fetches as many finds as were loaded, like the web app
+     * invalidating every loaded page, so the list keeps its length while picking up new, changed and deleted finds.
+     */
     public function onResume(): void
     {
-        $this->reload();
+        $this->reload(keepLoaded: true);
     }
 
     public function updatedSearch(): void
@@ -45,7 +56,7 @@ class History extends NativeComponent
 
     public function refresh(): void
     {
-        $this->reload();
+        $this->reload(keepLoaded: true);
     }
 
     public function clearSearch(): void
@@ -84,32 +95,45 @@ class History extends NativeComponent
         ]);
     }
 
-    private function reload(): void
+    private function reload(bool $keepLoaded = false): void
     {
+        $target = $keepLoaded ? max(count($this->itemIds), HistoryQuery::PAGE_SIZE) : HistoryQuery::PAGE_SIZE;
+
         $this->itemIds = [];
+        $this->items = new Collection;
         $this->nextCursor = null;
-        $this->loadPage(null);
+
+        if (! $this->loadPage(null)) {
+            return;
+        }
+
+        while ($this->nextCursor !== null && count($this->itemIds) < $target && $this->loadPage($this->nextCursor)) {
+            //
+        }
     }
 
-    private function loadPage(?string $cursor): void
+    private function loadPage(?string $cursor): bool
     {
         try {
             $page = (new HistoryQuery)->page($this->search, $cursor);
         } catch (HistoryQueryException $exception) {
             $this->fail($exception->getMessage(), $cursor !== null);
 
-            return;
+            return false;
         } catch (Throwable $exception) {
             report($exception);
             $this->fail('Could not load saved finds.', $cursor !== null);
 
-            return;
+            return false;
         }
 
-        $this->itemIds = array_values(array_unique([...$this->itemIds, ...$page['items']->modelKeys()]));
+        $this->items = $this->loadedItems()->concat($page['items'])->unique('id')->values();
+        $this->itemIds = $this->items->modelKeys();
         $this->nextCursor = $page['nextCursor'];
         $this->error = null;
         $this->failedLoadingMore = false;
+
+        return true;
     }
 
     private function fail(string $message, bool $whileLoadingMore): void
@@ -123,10 +147,12 @@ class History extends NativeComponent
      */
     private function loadedItems(): Collection
     {
-        if ($this->itemIds === []) {
-            return new Collection;
+        if ($this->items === null || $this->items->count() !== count($this->itemIds)) {
+            $this->items = $this->itemIds === []
+                ? new Collection
+                : Item::query()->whereKey($this->itemIds)->latestSeen()->get();
         }
 
-        return Item::query()->whereKey($this->itemIds)->latestSeen()->get();
+        return $this->items;
     }
 }

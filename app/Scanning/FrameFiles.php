@@ -138,10 +138,24 @@ class FrameFiles
         $directory ??= rtrim(sys_get_temp_dir(), '/').'/'.self::PickerDirectory;
 
         foreach (glob($directory.'/'.self::PickerFilePattern) ?: [] as $file) {
-            if (is_file($file) && ! in_array($file, $keep, true) && time() - (int) filemtime($file) >= $minimumAgeSeconds) {
+            if (is_file($file) && ! in_array($file, $keep, true) && time() - self::pickedAt($file) >= $minimumAgeSeconds) {
                 @unlink($file);
             }
         }
+    }
+
+    /**
+     * When a gallery copy was picked (unix seconds). The copy keeps the source asset's modification time, so this
+     * reads the millisecond timestamp the picker writes into the name (`gallery_selected_<ms>_<index>`), falling
+     * back to the inode change time, which the copy sets.
+     */
+    public static function pickedAt(string $file): int
+    {
+        if (preg_match('/^gallery_selected_(\d{10,})_/', basename($file), $matches) === 1) {
+            return intdiv((int) $matches[1], 1000);
+        }
+
+        return (int) filectime($file);
     }
 
     public function delete(?string $relativePath): void

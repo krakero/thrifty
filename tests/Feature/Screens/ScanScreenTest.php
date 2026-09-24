@@ -974,12 +974,15 @@ it('sends a changed interval for the running video over the bridge', function ()
     expect(scanState()->videoIntervalSeconds)->toBe(7);
 });
 
-it('sweeps picked gallery copies left behind by an earlier run', function () {
+it('sweeps picked gallery copies left behind by an earlier run, dated by their pick time', function () {
     $directory = sys_get_temp_dir().'/thrifty-gallery-'.uniqid();
     mkdir($directory);
-    touch($stale = $directory.'/gallery_selected_1_0.mp4', time() - 3600);
-    touch($inUse = $directory.'/gallery_selected_2_0.mp4', time() - 3600);
-    touch($recent = $directory.'/gallery_selected_3_0.mp4');
+    $pickedMs = fn (int $secondsAgo) => (time() - $secondsAgo) * 1000 + 123;
+
+    // Picker copies keep the source asset's old mtime, so only the name says when they were picked.
+    touch($stale = $directory.'/gallery_selected_'.$pickedMs(3600).'_0.mp4', time() - 86400);
+    touch($inUse = $directory.'/gallery_selected_'.$pickedMs(3600).'_1.mp4', time() - 86400);
+    touch($recent = $directory.'/gallery_selected_'.$pickedMs(5).'_0.mp4', time() - 86400);
     touch($other = $directory.'/unrelated.mp4', time() - 3600);
 
     app(FrameFiles::class)->sweepPickedMedia([$inUse], $directory);
@@ -993,6 +996,14 @@ it('sweeps picked gallery copies left behind by an earlier run', function () {
     rmdir($directory);
 });
 
+it('dates an unnamed gallery copy by its inode change time', function () {
+    $file = tempnam(sys_get_temp_dir(), 'gallery_selected_x');
+    touch($file, time() - 86400);
+
+    expect(FrameFiles::pickedAt($file))->toBeGreaterThan(time() - 60);
+
+    unlink($file);
+});
 it('offers the iOS Settings app when camera access is off', function () {
     Native::test(Scan::class)->tap('toggle-live')
         ->emitNative(CameraFailed::class, ['message' => 'Camera access is off — enable it in Settings.'])

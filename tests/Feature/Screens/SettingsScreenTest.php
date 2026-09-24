@@ -115,3 +115,13 @@ it('pages saved finds', function () {
         ->assertSet('savedFindsLimit', Settings::SavedFindsPageSize * 2)
         ->assertDontSee('Load more finds');
 });
+
+it('is accessible', function () {
+    Item::factory()->create();
+
+    Native::test(Settings::class)->assertAccessible();
+});
+
+it('is routed under the stack layout', function () {
+    Native::visit('/settings')->assertScreen(Settings::class)->assertNavTitle('Settings');
+});

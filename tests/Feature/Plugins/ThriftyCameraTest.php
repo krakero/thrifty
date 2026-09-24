@@ -9,6 +9,7 @@ use Native\Mobile\Events\Concerns\BroadcastsGlobally;
 use Native\Mobile\Testing\Native;
 use Thrifty\Camera\Elements\ThriftyCameraView;
 use Thrifty\Camera\Events\CameraFailed;
+use Thrifty\Camera\Events\CameraStarted;
 use Thrifty\Camera\Events\FrameCaptured;
 use Thrifty\Camera\Events\VideoFramesExtracted;
 use Thrifty\Camera\Facades\ThriftyCamera;
@@ -71,6 +72,14 @@ class ThriftyCameraFixtureScreen extends NativeComponent
     public function cameraFailed(string $message): void
     {
         $this->failure = $message;
+    }
+
+    public ?string $startedFacing = null;
+
+    #[On(CameraStarted::class)]
+    public function cameraStarted(string $facing): void
+    {
+        $this->startedFacing = $facing;
     }
 
     public function toggle(): void
@@ -407,7 +416,7 @@ it('overrides the generic plugin permission strings', function () {
 
 it('broadcasts plugin events globally', function (string $class) {
     expect(is_subclass_of($class, BroadcastsGlobally::class))->toBeTrue();
-})->with([FrameCaptured::class, VideoFramesExtracted::class, CameraFailed::class]);
+})->with([FrameCaptured::class, VideoFramesExtracted::class, CameraFailed::class, CameraStarted::class]);
 
 it('carries a run id on video failures', function () {
     expect((new CameraFailed('Couldn\'t read that video.', 'run-1'))->runId)->toBe('run-1')
@@ -531,4 +540,19 @@ it('lets a scan screen catch up on a video run delivered while it was covered', 
 
     expect(app(VideoRunJournal::class)->status('run-current')['known'])->toBeFalse()
         ->and(app(VideoRunJournal::class)->status('run-old')['pending'])->toBe(2);
+});
+
+it('delivers camera started to on handlers', function () {
+    expect((new CameraStarted('front'))->facing)->toBe('front');
+
+    Native::test(ThriftyCameraFixtureScreen::class)
+        ->emitNative(CameraStarted::class, ['facing' => 'back'])
+        ->assertSet('startedFacing', 'back');
+});
+
+it('does not journal camera started', function () {
+    Native::test(ThriftyCameraOtherFixtureScreen::class)
+        ->emitNative(CameraStarted::class, ['facing' => 'back']);
+
+    expect(File::exists($this->journalPath))->toBeFalse();
 });

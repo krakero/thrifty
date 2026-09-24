@@ -78,6 +78,7 @@
         }
     },
     "events": [
+        "Thrifty\\Camera\\Events\\CameraStarted",
         "Thrifty\\Camera\\Events\\FrameCaptured",
         "Thrifty\\Camera\\Events\\VideoFramesExtracted",
         "Thrifty\\Camera\\Events\\CameraFailed"

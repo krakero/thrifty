@@ -29,7 +29,8 @@ enum ThriftyCameraFunctions {
 
     // MARK: - ThriftyCamera.ExtractVideoFrames
 
-    /// Samples a video every `intervalSeconds` into `directory`.
+    /// Plays through a video in real time, sampling a frame at 0.35s and
+    /// then every `intervalSeconds`, into `directory`.
     class ExtractVideoFrames: BridgeFunction {
         func execute(parameters: [String: Any]) throws -> [String: Any] {
             guard let videoPath = parameters["videoPath"] as? String, !videoPath.isEmpty else {
@@ -40,13 +41,12 @@ enum ThriftyCameraFunctions {
                 throw BridgeError.invalidParameters("directory is required")
             }
 
-            let interval = max(1, (parameters["intervalSeconds"] as? NSNumber)?.doubleValue ?? 3)
+            let interval = max(1, (parameters["intervalSeconds"] as? NSNumber)?.doubleValue ?? 2)
+            let runId = (parameters["runId"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? UUID().uuidString.lowercased()
 
-            Task.detached(priority: .userInitiated) {
-                await ThriftyVideoFrameExtractor.extract(videoPath: videoPath, interval: interval, directory: directory)
-            }
+            ThriftyVideoFrameExtractor.start(runId: runId, videoPath: videoPath, interval: interval, directory: directory)
 
-            return ["started": true]
+            return ["started": true, "runId": runId]
         }
     }
 
@@ -68,6 +68,39 @@ enum ThriftyCameraFunctions {
             }
 
             return ["started": true]
+        }
+    }
+
+    // MARK: - ThriftyCamera.CancelVideoExtraction
+
+    /// Cancels a running video extraction; it still ends with VideoFramesExtracted.
+    class CancelVideoExtraction: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            guard let runId = parameters["runId"] as? String, !runId.isEmpty else {
+                throw BridgeError.invalidParameters("runId is required")
+            }
+
+            return ["cancelled": ThriftyVideoFrameExtractor.cancel(runId: runId)]
+        }
+    }
+
+    // MARK: - ThriftyCamera.Shutter
+
+    /// Plays the snapshot feedback: a short shutter click and a light haptic.
+    class Shutter: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            ThriftyChimePlayer.shared.playShutter()
+
+            return ["played": true]
+        }
+    }
+
+    // MARK: - ThriftyCamera.DeviceTimezone
+
+    /// Returns the device's IANA timezone identifier.
+    class DeviceTimezone: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            ["timezone": TimeZone.current.identifier]
         }
     }
 
@@ -135,12 +168,17 @@ enum ThriftyImageImporter {
             return
         }
 
-        let options: [CFString: Any] = [
+        var options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: Int(ThriftyFrameWriter.maxDimension),
             kCGImageSourceShouldCacheImmediately: true,
         ]
+
+        // Decode straight to the web's size (at most 960px wide once
+        // oriented) instead of decoding a full 12MP HEIC first.
+        if let maxPixelSize = decodeMaxPixelSize(source) {
+            options[kCGImageSourceThumbnailMaxPixelSize] = maxPixelSize
+        }
 
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             ThriftyCameraEvents.cameraFailed("Couldn't decode that image. Try a JPEG, PNG or HEIC photo.")
@@ -148,11 +186,28 @@ enum ThriftyImageImporter {
         }
 
         do {
-            let frame = try ThriftyFrameWriter.write(cgImage: image, to: directory)
+            let frame = try ThriftyFrameWriter.write(cgImage: image, to: directory, quality: ThriftyFrameWriter.imageQuality)
             ThriftyCameraEvents.frameCaptured(frame, source: "image")
         } catch {
             ThriftyCameraEvents.cameraFailed("Couldn't save that image: \(error.localizedDescription)")
         }
+    }
+
+    /// The longest side to decode at so the oriented width lands on 960px.
+    private static func decodeMaxPixelSize(_ source: CGImageSource) -> Int? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let pixelWidth = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.doubleValue,
+              let pixelHeight = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.doubleValue,
+              pixelWidth > 0, pixelHeight > 0 else {
+            return nil
+        }
+
+        // EXIF orientations 5–8 rotate by 90°, swapping width and height.
+        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
+        let orientedWidth = orientation >= 5 ? pixelHeight : pixelWidth
+        let scale = ThriftyFrameWriter.scale(forWidth: CGFloat(orientedWidth))
+
+        return Int((max(pixelWidth, pixelHeight) * Double(scale)).rounded(.up))
     }
 
     static func fileURL(_ path: String) -> URL {
@@ -166,13 +221,55 @@ enum ThriftyImageImporter {
 
 // MARK: - Video frame extraction
 
+/// Mirrors the web app's video scanning: the video "plays" in real time and
+/// a frame is sampled at 0.35s, then every `interval` seconds of wall-clock
+/// time, until the end of the video. Each run has an id carried by its
+/// events and can be cancelled. Every exit path (end, failure, cancel) ends
+/// with VideoFramesExtracted.
 enum ThriftyVideoFrameExtractor {
-    static func extract(videoPath: String, interval: Double, directory: String) async {
+    static let firstFrameDelay = 0.35
+
+    private static let lock = NSLock()
+    private static var runs: [String: Task<Void, Never>] = [:]
+
+    static func start(runId: String, videoPath: String, interval: Double, directory: String) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        runs[runId]?.cancel()
+        runs[runId] = Task.detached(priority: .userInitiated) {
+            let count = await extract(runId: runId, videoPath: videoPath, interval: interval, directory: directory)
+
+            ThriftyCameraEvents.videoFramesExtracted(count: count, runId: runId)
+
+            lock.withLock {
+                runs[runId] = nil
+            }
+        }
+    }
+
+    /// Returns false when no run with that id is active.
+    @discardableResult
+    static func cancel(runId: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard let task = runs[runId] else {
+            return false
+        }
+
+        task.cancel()
+
+        return true
+    }
+
+    /// Returns the number of frames emitted.
+    private static func extract(runId: String, videoPath: String, interval: Double, directory: String) async -> Int {
         let url = ThriftyImageImporter.fileURL(videoPath)
 
         guard FileManager.default.fileExists(atPath: url.path) else {
             ThriftyCameraEvents.cameraFailed("Couldn't find that video.")
-            return
+            return 0
         }
 
         let asset = AVURLAsset(url: url)
@@ -184,43 +281,74 @@ enum ThriftyVideoFrameExtractor {
 
             guard !tracks.isEmpty, duration.isFinite, duration > 0 else {
                 ThriftyCameraEvents.cameraFailed("That file doesn't contain any video to scan.")
-                return
+                return 0
             }
         } catch {
             ThriftyCameraEvents.cameraFailed("Couldn't read that video: \(error.localizedDescription)")
-            return
+            return 0
         }
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
-        generator.maximumSize = CGSize(width: ThriftyFrameWriter.maxDimension, height: ThriftyFrameWriter.maxDimension)
 
-        let tolerance = CMTime(seconds: min(0.5, interval / 4), preferredTimescale: 600)
+        // Frames should show what was on screen at that moment, like a
+        // canvas grab of the playing <video>.
+        let tolerance = CMTime(seconds: 0.05, preferredTimescale: 600)
         generator.requestedTimeToleranceBefore = tolerance
         generator.requestedTimeToleranceAfter = tolerance
 
+        let startedAt = Date()
         var count = 0
-        var seconds = 0.0
+        var nextSampleAt = firstFrameDelay
+        var lastPosition = -1.0
 
-        while seconds < duration {
-            do {
-                let (cgImage, actualTime) = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
-                let frame = try ThriftyFrameWriter.write(cgImage: cgImage, to: directory)
-                let position = actualTime.seconds.isFinite ? actualTime.seconds : seconds
-
-                ThriftyCameraEvents.frameCaptured(frame, source: "video", videoSeconds: (position * 100).rounded() / 100)
-                count += 1
-            } catch {
-                print("[ThriftyCamera] Skipped video frame at \(seconds)s: \(error.localizedDescription)")
+        while !Task.isCancelled {
+            let wait = nextSampleAt - Date().timeIntervalSince(startedAt)
+            if wait > 0 {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+                } catch {
+                    break
+                }
             }
 
-            seconds += interval
+            // The playhead is wherever real time says it is (1x playback).
+            let position = Date().timeIntervalSince(startedAt)
+            guard position < duration, !Task.isCancelled else {
+                break
+            }
+
+            nextSampleAt += interval
+            while nextSampleAt <= Date().timeIntervalSince(startedAt) {
+                nextSampleAt += interval
+            }
+
+            // Like the web, skip when the playhead hasn't moved.
+            guard position > lastPosition else {
+                continue
+            }
+            lastPosition = position
+
+            do {
+                let (cgImage, actualTime) = try await generator.image(at: CMTime(seconds: position, preferredTimescale: 600))
+                guard !Task.isCancelled else {
+                    break
+                }
+
+                let frame = try ThriftyFrameWriter.write(cgImage: cgImage, to: directory, quality: ThriftyFrameWriter.frameQuality)
+                let seconds = actualTime.seconds.isFinite ? actualTime.seconds : position
+
+                ThriftyCameraEvents.frameCaptured(frame, source: "video", videoSeconds: (seconds * 100).rounded() / 100, runId: runId)
+                count += 1
+            } catch {
+                print("[ThriftyCamera] Skipped video frame at \(position)s: \(error.localizedDescription)")
+            }
         }
 
-        if count == 0 {
+        if count == 0 && !Task.isCancelled {
             ThriftyCameraEvents.cameraFailed("Couldn't read any frames from that video.")
         }
 
-        ThriftyCameraEvents.videoFramesExtracted(count: count)
+        return count
     }
 }

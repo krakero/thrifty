@@ -310,3 +310,11 @@ it('keeps the manifest, the facade and the swift bridge classes in sync', functi
             ->and($swift)->toContain(str_replace('\\', '\\\\', $event));
     }
 });
+
+it('overrides the generic plugin permission strings', function () {
+    expect(config('nativephp.permissions'))
+        ->NSCameraUsageDescription->toContain('Thrifty')
+        ->NSMicrophoneUsageDescription->toContain('Thrifty')
+        ->NSPhotoLibraryUsageDescription->toContain('Thrifty')
+        ->NSPhotoLibraryAddUsageDescription->toContain('Thrifty');
+});

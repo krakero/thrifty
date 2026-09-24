@@ -32,7 +32,16 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     private var framesDirectory = ""
     private var nextLiveCaptureAt: CFTimeInterval = 0
     private var isEncodingLiveFrame = false
-    private var pendingSnapshotDirectories: [String] = []
+    private var pendingSnapshots: [PendingSnapshot] = []
+
+    /// How long a snapshot waits for the camera to deliver a frame, so a
+    /// snap that also turns the camera on still captures (like the web).
+    private let snapshotTimeout: TimeInterval = 4
+
+    private struct PendingSnapshot {
+        let id: UUID
+        let directory: String
+    }
 
     // MARK: Session state (sessionQueue)
 
@@ -59,7 +68,8 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     /// Applies the element's props. Safe to call on every SwiftUI update.
     func update(scanning newScanning: Bool, interval newInterval: Int, facing: String, framesDirectory directory: String) {
         stateLock.lock()
-        if newScanning && !scanning {
+        let startedScanning = newScanning && !scanning
+        if startedScanning {
             nextLiveCaptureAt = CACurrentMediaTime() + firstFrameDelay
         }
         scanning = newScanning
@@ -70,7 +80,13 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         let normalizedFacing = ["back", "front", "off"].contains(facing) ? facing : "back"
 
         sessionQueue.async {
-            guard self.desiredFacing != normalizedFacing else {
+            // Starting a scan re-checks permission, so a denied camera is
+            // reported every time the user tries, not just once.
+            if startedScanning {
+                self.reportedPermissionProblem = false
+            }
+
+            guard startedScanning || self.desiredFacing != normalizedFacing else {
                 return
             }
 
@@ -103,17 +119,41 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
 
     // MARK: - Snapshot API
 
-    /// Queues the next preview frame to be saved into `directory` (source "snapshot").
+    /// Queues the next preview frame to be saved into `directory` (source
+    /// "snapshot"). If the camera is still starting (e.g. the same tap turned
+    /// it on), the snapshot waits briefly for the first frame.
     func requestSnapshot(directory: String) {
         sessionQueue.async {
-            guard self.session.isRunning else {
-                ThriftyCameraEvents.cameraFailed("Turn the camera on to take a snapshot.")
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .denied, .restricted:
+                ThriftyCameraEvents.cameraFailed(ThriftyCameraError.permissionDenied.localizedDescription)
                 return
+            default:
+                break
             }
 
+            let snapshot = PendingSnapshot(id: UUID(), directory: directory)
+
             self.stateLock.lock()
-            self.pendingSnapshotDirectories.append(directory)
+            self.pendingSnapshots.append(snapshot)
             self.stateLock.unlock()
+
+            self.sessionQueue.asyncAfter(deadline: .now() + self.snapshotTimeout) {
+                self.stateLock.lock()
+                let stillPending = self.pendingSnapshots.contains { $0.id == snapshot.id }
+                self.pendingSnapshots.removeAll { $0.id == snapshot.id }
+                self.stateLock.unlock()
+
+                guard stillPending else {
+                    return
+                }
+
+                if AVCaptureDevice.authorizationStatus(for: .video) != .authorized {
+                    ThriftyCameraEvents.cameraFailed(ThriftyCameraError.permissionDenied.localizedDescription)
+                } else {
+                    ThriftyCameraEvents.cameraFailed("Turn the camera on to take a snapshot.")
+                }
+            }
         }
     }
 
@@ -126,7 +166,6 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             if session.isRunning {
                 session.stopRunning()
             }
-            clearPendingSnapshots()
             return
         }
 
@@ -194,9 +233,10 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         session.beginConfiguration()
         defer { session.commitConfiguration() }
 
-        // 720p keeps the longest side at 1280px, the size we store anyway.
-        if session.canSetSessionPreset(.hd1280x720) {
-            session.sessionPreset = .hd1280x720
+        // The web asks getUserMedia for an ideal 1920x1080 stream and then
+        // scales frames to 960px wide; do the same.
+        if session.canSetSessionPreset(.hd1920x1080) {
+            session.sessionPreset = .hd1920x1080
         } else {
             session.sessionPreset = .high
         }
@@ -242,17 +282,6 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         return true
     }
 
-    private func clearPendingSnapshots() {
-        stateLock.lock()
-        let hadPending = !pendingSnapshotDirectories.isEmpty
-        pendingSnapshotDirectories.removeAll()
-        stateLock.unlock()
-
-        if hadPending {
-            ThriftyCameraEvents.cameraFailed("The camera stopped before the snapshot was taken.")
-        }
-    }
-
     // MARK: - Notifications
 
     @objc private func appDidEnterBackground() {
@@ -290,8 +319,8 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         let now = CACurrentMediaTime()
 
         stateLock.lock()
-        let snapshotDirectories = pendingSnapshotDirectories
-        pendingSnapshotDirectories.removeAll()
+        let snapshotDirectories = pendingSnapshots.map(\.directory)
+        pendingSnapshots.removeAll()
 
         var liveDirectory: String?
         if scanning, !framesDirectory.isEmpty, !isEncodingLiveFrame, now >= nextLiveCaptureAt {

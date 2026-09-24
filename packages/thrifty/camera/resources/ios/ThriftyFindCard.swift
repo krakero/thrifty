@@ -8,11 +8,17 @@ struct ThriftyFindCard {
         let value: String
     }
 
+    struct Box {
+        /// Normalized 0–1000 rect within the image.
+        let rect: CGRect
+        let selected: Bool
+    }
+
     let title: String
     let subtitle: String
     let imagePath: String
-    /// Normalized 0–1000 bounding box within the image.
-    let box: CGRect?
+    /// Every find in the frame; the selected one is drawn strongest.
+    let boxes: [Box]
     let rows: [Row]
     let summary: String
 
@@ -26,16 +32,28 @@ struct ThriftyFindCard {
             Row(label: row["label"] as? String ?? "", value: row["value"] as? String ?? "")
         }
 
-        if let box = parameters["box"] as? [String: Any],
-           let xMin = Self.number(box["xMin"]),
-           let yMin = Self.number(box["yMin"]),
-           let xMax = Self.number(box["xMax"]),
-           let yMax = Self.number(box["yMax"]),
-           xMax > xMin, yMax > yMin {
-            self.box = CGRect(x: xMin, y: yMin, width: xMax - xMin, height: yMax - yMin)
-        } else {
-            box = nil
+        let boxes = (parameters["boxes"] as? [[String: Any]] ?? []).compactMap { box in
+            Self.rect(box).map { Box(rect: $0, selected: (box["selected"] as? Bool) ?? false) }
         }
+
+        // `box` is the single-find form; it is the selected find.
+        if boxes.isEmpty, let box = parameters["box"] as? [String: Any], let rect = Self.rect(box) {
+            self.boxes = [Box(rect: rect, selected: true)]
+        } else {
+            self.boxes = boxes
+        }
+    }
+
+    private static func rect(_ box: [String: Any]) -> CGRect? {
+        guard let xMin = number(box["xMin"]),
+              let yMin = number(box["yMin"]),
+              let xMax = number(box["xMax"]),
+              let yMax = number(box["yMax"]),
+              xMax > xMin, yMax > yMin else {
+            return nil
+        }
+
+        return CGRect(x: xMin, y: yMin, width: xMax - xMin, height: yMax - yMin)
     }
 
     private static func number(_ value: Any?) -> CGFloat? {
@@ -106,7 +124,7 @@ enum ThriftyFindCardRenderer {
             context.fill(CGRect(origin: .zero, size: size))
 
             if let image = image, let rect = imageRect {
-                drawFrame(image, in: rect, box: card.box, context: context.cgContext)
+                drawFrame(image, in: rect, boxes: card.boxes, context: context.cgContext)
             }
 
             var y = (imageRect?.maxY ?? 0) + padding
@@ -142,31 +160,32 @@ enum ThriftyFindCardRenderer {
         }
     }
 
-    private static func drawFrame(_ image: UIImage, in rect: CGRect, box: CGRect?, context: CGContext) {
+    private static func drawFrame(_ image: UIImage, in rect: CGRect, boxes: [ThriftyFindCard.Box], context: CGContext) {
         context.saveGState()
         UIBezierPath(roundedRect: rect, cornerRadius: 32).addClip()
         image.draw(in: rect)
         context.restoreGState()
 
-        guard let box = box else {
-            return
+        // Other finds first, faint and thin; the selected find on top.
+        let ordered = boxes.filter { !$0.selected } + boxes.filter(\.selected)
+
+        for box in ordered {
+            let boxRect = CGRect(
+                x: rect.minX + box.rect.minX / 1000 * rect.width,
+                y: rect.minY + box.rect.minY / 1000 * rect.height,
+                width: box.rect.width / 1000 * rect.width,
+                height: box.rect.height / 1000 * rect.height
+            ).intersection(rect).insetBy(dx: 4, dy: 4)
+
+            guard !boxRect.isNull, boxRect.width > 8, boxRect.height > 8 else {
+                continue
+            }
+
+            let path = UIBezierPath(roundedRect: boxRect, cornerRadius: 14)
+            path.lineWidth = box.selected ? 8 : 4
+            (box.selected ? tomato : text.withAlphaComponent(0.55)).setStroke()
+            path.stroke()
         }
-
-        let boxRect = CGRect(
-            x: rect.minX + box.minX / 1000 * rect.width,
-            y: rect.minY + box.minY / 1000 * rect.height,
-            width: box.width / 1000 * rect.width,
-            height: box.height / 1000 * rect.height
-        ).intersection(rect).insetBy(dx: 4, dy: 4)
-
-        guard !boxRect.isNull, boxRect.width > 8, boxRect.height > 8 else {
-            return
-        }
-
-        let path = UIBezierPath(roundedRect: boxRect, cornerRadius: 14)
-        path.lineWidth = 8
-        tomato.setStroke()
-        path.stroke()
     }
 
     private static func drawRow(_ row: ThriftyFindCard.Row, font: UIFont, top: CGFloat, height: CGFloat, contentWidth: CGFloat) {

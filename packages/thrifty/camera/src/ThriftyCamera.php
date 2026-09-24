@@ -49,7 +49,8 @@ class ThriftyCamera
 
     /**
      * Normalize a picked image (HEIC/HEIF/PNG/JPEG/WebP) into a JPEG frame:
-     * EXIF orientation applied, longest side at most 1280px, quality 0.7.
+     * EXIF orientation applied, at most 960px wide, quality 0.82 (the web's
+     * upload compression).
      * Asynchronous: emits FrameCaptured with source "image", or CameraFailed.
      */
     public function importImage(string $imagePath, string $directory): void

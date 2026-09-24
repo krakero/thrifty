@@ -64,8 +64,8 @@
     "ios": {
         "min_version": "18.2",
         "info_plist": {
-            "NSCameraUsageDescription": "Thrifty uses the camera to spot items worth reselling while you browse.",
-            "NSPhotoLibraryAddUsageDescription": "Thrifty can save find cards you share to your photo library."
+            "NSCameraUsageDescription": "Thrifty uses the camera to spot items worth reselling while you browse a sale.",
+            "NSPhotoLibraryAddUsageDescription": "Thrifty can save the find cards you share to your photo library."
         },
         "dependencies": {
             "swift_packages": [],

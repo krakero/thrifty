@@ -11,7 +11,7 @@ enum ThriftyCameraEvents {
     static let videoFramesExtracted = "Thrifty\\Camera\\Events\\VideoFramesExtracted"
     static let cameraFailed = "Thrifty\\Camera\\Events\\CameraFailed"
 
-    static func frameCaptured(_ frame: ThriftyEncodedFrame, source: String, videoSeconds: Double? = nil) {
+    static func frameCaptured(_ frame: ThriftyEncodedFrame, source: String, videoSeconds: Double? = nil, runId: String? = nil) {
         var payload: [String: Any] = [
             "path": frame.path,
             "source": source,
@@ -26,11 +26,21 @@ enum ThriftyCameraEvents {
             payload["videoSeconds"] = videoSeconds
         }
 
+        if let runId = runId {
+            payload["runId"] = runId
+        }
+
         send(frameCaptured, payload)
     }
 
-    static func videoFramesExtracted(count: Int) {
-        send(videoFramesExtracted, ["count": count])
+    static func videoFramesExtracted(count: Int, runId: String?) {
+        var payload: [String: Any] = ["count": count]
+
+        if let runId = runId {
+            payload["runId"] = runId
+        }
+
+        send(videoFramesExtracted, payload)
     }
 
     static func cameraFailed(_ message: String) {
@@ -53,11 +63,13 @@ struct ThriftyEncodedFrame {
     let capturedAt: String
 }
 
-/// Downscales and writes frames as JPEG, matching the web app's compressed
-/// sampling: longest side at most 1280px, quality 0.7.
+/// Downscales and writes frames as JPEG with the web app's capture
+/// parameters: at most 960px wide (scaled by width, never upscaled),
+/// quality 0.76 for camera and video frames and 0.82 for picked images.
 enum ThriftyFrameWriter {
-    static let maxDimension: CGFloat = 1280
-    static let jpegQuality: CGFloat = 0.7
+    static let maxWidth: CGFloat = 960
+    static let frameQuality: CGFloat = 0.76
+    static let imageQuality: CGFloat = 0.82
 
     private static let ciContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -71,6 +83,11 @@ enum ThriftyFrameWriter {
         timestampFormatter.string(from: date)
     }
 
+    /// The web's `Math.min(1, 960 / width)`.
+    static func scale(forWidth width: CGFloat) -> CGFloat {
+        min(1, maxWidth / max(width, 1))
+    }
+
     /// Renders a (camera) CIImage into a downscaled CGImage. Done
     /// synchronously on the capture queue so the pixel buffer is released
     /// back to the capture pool before the slower JPEG encode.
@@ -80,7 +97,7 @@ enum ThriftyFrameWriter {
             return nil
         }
 
-        let scale = min(1, maxDimension / max(extent.width, extent.height))
+        let scale = scale(forWidth: extent.width)
 
         var image = ciImage.transformed(by: CGAffineTransform(translationX: -extent.origin.x, y: -extent.origin.y))
         if scale < 1 {
@@ -90,22 +107,22 @@ enum ThriftyFrameWriter {
         let outputRect = CGRect(
             x: 0,
             y: 0,
-            width: max(1, (extent.width * scale).rounded(.down)),
-            height: max(1, (extent.height * scale).rounded(.down))
+            width: max(1, (extent.width * scale).rounded()),
+            height: max(1, (extent.height * scale).rounded())
         )
 
         return ciContext.createCGImage(image, from: outputRect)
     }
 
-    static func write(cgImage: CGImage, to directory: String, capturedAt: Date = Date()) throws -> ThriftyEncodedFrame {
+    static func write(cgImage: CGImage, to directory: String, quality: CGFloat = frameQuality, capturedAt: Date = Date()) throws -> ThriftyEncodedFrame {
         var source = cgImage
-        let longest = CGFloat(max(cgImage.width, cgImage.height))
+        let scale = scale(forWidth: CGFloat(cgImage.width))
 
-        if longest > maxDimension, let resized = resize(cgImage, scale: maxDimension / longest) {
+        if scale < 1, let resized = resize(cgImage, scale: scale) {
             source = resized
         }
 
-        guard let data = UIImage(cgImage: source).jpegData(compressionQuality: jpegQuality) else {
+        guard let data = UIImage(cgImage: source).jpegData(compressionQuality: quality) else {
             throw ThriftyCameraError.encodingFailed
         }
 
@@ -151,7 +168,7 @@ enum ThriftyCameraError: LocalizedError {
         case .cameraUnavailable:
             return "No camera is available on this device."
         case .permissionDenied:
-            return "Camera access is off. Allow it for Thrifty in Settings to scan."
+            return "Camera access is off — enable it in Settings."
         }
     }
 }

@@ -109,10 +109,14 @@ return [
     |
     */
 
+    // Plugin-provided keys can only be overridden here, not removed, so the
+    // generic strings nativephp/mobile-camera ships are replaced with ones
+    // that describe what Thrifty actually does.
     'permissions' => [
-        // 'NSCameraUsageDescription' => 'Used to take a profile photo.',
-        // 'NSMicrophoneUsageDescription' => 'Used to record audio with your videos.',
-        // 'NSPhotoLibraryUsageDescription' => 'Used to select photos for your post.',
+        'NSCameraUsageDescription' => 'Thrifty uses the camera to spot items worth reselling while you browse a sale.',
+        'NSMicrophoneUsageDescription' => 'Thrifty never records audio. iOS asks because the camera tools it uses can record video with sound.',
+        'NSPhotoLibraryUsageDescription' => 'Thrifty lets you pick photos and videos from your library to scan for items worth reselling.',
+        'NSPhotoLibraryAddUsageDescription' => 'Thrifty can save the find cards you share to your photo library.',
     ],
 
     /*

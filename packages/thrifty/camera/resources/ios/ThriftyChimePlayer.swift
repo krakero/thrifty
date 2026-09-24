@@ -2,18 +2,30 @@ import AVFoundation
 import Foundation
 import UIKit
 
-/// Plays the "find" chime: two quick rising sine notes (720Hz → 1080Hz, the
-/// same interval as the web app's glide) synthesized once into a PCM buffer.
+/// Plays the web app's two feedback sounds, synthesized once into PCM
+/// buffers with the same oscillator, glide and gain envelope as its
+/// Web Audio graphs (App.tsx playFoundSound / playSnapshotFeedback):
 ///
-/// Uses the ambient audio category so it mixes with the user's music and
-/// respects the silent switch; the success haptic fires either way.
+/// - find chime: sine gliding 720Hz → 1080Hz over 0.12s, gain rising to
+///   0.12 in 10ms and decaying to silence by 0.22s (stops at 0.24s),
+///   plus a success haptic
+/// - shutter: square wave gliding 1800Hz → 700Hz over 0.07s, gain 0.1
+///   decaying to silence by 0.09s, plus a light haptic
+///
+/// Uses the ambient audio category so it mixes with the user's music.
+/// Like Web Audio in iOS Safari, it is silent when the ringer switch is off;
+/// the haptic fires either way.
 final class ThriftyChimePlayer {
     static let shared = ThriftyChimePlayer()
+
+    private static let sampleRate = 44_100.0
 
     private let queue = DispatchQueue(label: "com.thrifty.camera.chime", qos: .userInitiated)
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
-    private var buffer: AVAudioPCMBuffer?
+    private var isConnected = false
+    private var chimeBuffer: AVAudioPCMBuffer?
+    private var shutterBuffer: AVAudioPCMBuffer?
 
     func play() {
         DispatchQueue.main.async {
@@ -22,80 +34,126 @@ final class ThriftyChimePlayer {
             haptic.notificationOccurred(.success)
         }
 
+        schedule { try self.chime() }
+    }
+
+    func playShutter() {
+        DispatchQueue.main.async {
+            let haptic = UIImpactFeedbackGenerator(style: .light)
+            haptic.prepare()
+            haptic.impactOccurred()
+        }
+
+        schedule { try self.shutter() }
+    }
+
+    // MARK: - Playback (queue)
+
+    private func schedule(_ buffer: @escaping () throws -> AVAudioPCMBuffer) {
         queue.async {
             do {
-                try self.playChime()
+                try self.playBuffer(buffer())
             } catch {
-                print("[ThriftyCamera] Chime failed: \(error.localizedDescription)")
+                print("[ThriftyCamera] Sound failed: \(error.localizedDescription)")
             }
         }
     }
 
-    private func playChime() throws {
+    private func playBuffer(_ buffer: AVAudioPCMBuffer) throws {
         let audioSession = AVAudioSession.sharedInstance()
         if audioSession.category != .ambient {
             try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
         }
         try audioSession.setActive(true)
 
-        let chime = try preparedBuffer()
+        if !isConnected {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
+            isConnected = true
+        }
 
         if !engine.isRunning {
             engine.prepare()
             try engine.start()
         }
 
-        player.scheduleBuffer(chime, at: nil, options: .interrupts, completionHandler: nil)
+        player.scheduleBuffer(buffer, at: nil, options: .interrupts, completionHandler: nil)
         if !player.isPlaying {
             player.play()
         }
     }
 
-    private func preparedBuffer() throws -> AVAudioPCMBuffer {
-        if let buffer = buffer {
-            return buffer
+    // MARK: - Synthesis
+
+    private func chime() throws -> AVAudioPCMBuffer {
+        if let chimeBuffer = chimeBuffer {
+            return chimeBuffer
         }
 
-        let sampleRate = 44_100.0
+        let buffer = try Self.synthesize(
+            duration: 0.24,
+            frequency: { Self.exponentialRamp(from: 720, to: 1_080, at: $0, over: 0.12) },
+            gain: { time in
+                time < 0.01
+                    ? Self.exponentialRamp(from: 0.0001, to: 0.12, at: time, over: 0.01)
+                    : Self.exponentialRamp(from: 0.12, to: 0.0001, at: time - 0.01, over: 0.21)
+            },
+            wave: { sin($0) }
+        )
+        chimeBuffer = buffer
+
+        return buffer
+    }
+
+    private func shutter() throws -> AVAudioPCMBuffer {
+        if let shutterBuffer = shutterBuffer {
+            return shutterBuffer
+        }
+
+        let buffer = try Self.synthesize(
+            duration: 0.09,
+            frequency: { Self.exponentialRamp(from: 1_800, to: 700, at: $0, over: 0.07) },
+            gain: { Self.exponentialRamp(from: 0.1, to: 0.0001, at: $0, over: 0.09) },
+            wave: { sin($0) >= 0 ? 1 : -1 }
+        )
+        shutterBuffer = buffer
+
+        return buffer
+    }
+
+    /// Web Audio's exponentialRampToValueAtTime: holds `to` after `duration`.
+    private static func exponentialRamp(from start: Double, to end: Double, at time: Double, over duration: Double) -> Double {
+        let progress = min(max(time / duration, 0), 1)
+
+        return start * pow(end / start, progress)
+    }
+
+    private static func synthesize(
+        duration: Double,
+        frequency: (Double) -> Double,
+        gain: (Double) -> Double,
+        wave: (Double) -> Double
+    ) throws -> AVAudioPCMBuffer {
         guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1) else {
             throw ThriftyCameraError.encodingFailed
         }
 
-        let duration = 0.38
         let frameCount = AVAudioFrameCount(sampleRate * duration)
-        guard let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
-              let samples = pcm.floatChannelData?[0] else {
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+              let samples = buffer.floatChannelData?[0] else {
             throw ThriftyCameraError.encodingFailed
         }
 
-        pcm.frameLength = frameCount
+        buffer.frameLength = frameCount
 
-        let notes: [(frequency: Double, start: Double, length: Double, peak: Double)] = [
-            (720, 0.0, 0.16, 0.22),
-            (1080, 0.09, 0.29, 0.24),
-        ]
-
+        // Accumulate phase so the glide is continuous.
+        var phase = 0.0
         for index in 0..<Int(frameCount) {
             let time = Double(index) / sampleRate
-            var value = 0.0
-
-            for note in notes where time >= note.start && time < note.start + note.length {
-                let local = time - note.start
-                let attack = min(1, local / 0.01)
-                let decay = exp(-local * 18)
-                let tail = min(1, (note.start + note.length - time) / 0.02)
-                let phase = 2 * Double.pi * note.frequency * local
-                let tone = sin(phase) + 0.18 * sin(2 * phase)
-                value += note.peak * attack * decay * tail * tone
-            }
-
-            samples[index] = Float(value)
+            samples[index] = Float(gain(time) * wave(phase))
+            phase += 2 * Double.pi * frequency(time) / sampleRate
         }
 
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: format)
-        buffer = pcm
-
-        return pcm
+        return buffer
     }
 }

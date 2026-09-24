@@ -68,6 +68,7 @@ class ItemDetail extends NativeComponent
         $this->from = $this->data('from') === 'scan' ? 'scan' : 'history';
         $this->chipOrder = $this->frameItems()
             ->sortBy(fn (Item $frameItem): int => $frameItem->id === $this->itemId ? 0 : 1)
+            ->values()
             ->modelKeys();
     }
 

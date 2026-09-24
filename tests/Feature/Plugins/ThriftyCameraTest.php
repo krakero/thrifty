@@ -1,15 +1,18 @@
 <?php
 
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\View;
 use Native\Mobile\Attributes\On;
 use Native\Mobile\Edge\CallbackRegistry;
 use Native\Mobile\Edge\NativeComponent;
+use Native\Mobile\Events\Concerns\BroadcastsGlobally;
 use Native\Mobile\Testing\Native;
 use Thrifty\Camera\Elements\ThriftyCameraView;
 use Thrifty\Camera\Events\CameraFailed;
 use Thrifty\Camera\Events\FrameCaptured;
 use Thrifty\Camera\Events\VideoFramesExtracted;
 use Thrifty\Camera\Facades\ThriftyCamera;
+use Thrifty\Camera\VideoRunJournal;
 
 class ThriftyCameraFixtureScreen extends NativeComponent
 {
@@ -25,6 +28,29 @@ class ThriftyCameraFixtureScreen extends NativeComponent
     public array $frames = [];
 
     public ?string $failure = null;
+
+    public ?string $videoRunId = null;
+
+    /** @var list<string> */
+    public array $consumed = [];
+
+    /**
+     * Scan-style consumption: ignore the direct payload and drain the journal.
+     */
+    public function consumeVideoEvents(): void
+    {
+        if ($this->videoRunId === null) {
+            return;
+        }
+
+        foreach (ThriftyCamera::takeVideoEvents($this->videoRunId) as $event) {
+            $this->consumed[] = match (true) {
+                $event instanceof FrameCaptured => 'frame:'.$event->path,
+                $event instanceof CameraFailed => 'failed:'.$event->message,
+                $event instanceof VideoFramesExtracted => 'done:'.$event->count,
+            };
+        }
+    }
 
     /** @var list<array{count: int, runId: string|null}> */
     public array $extractions = [];
@@ -58,8 +84,25 @@ class ThriftyCameraFixtureScreen extends NativeComponent
     }
 }
 
+class ThriftyCameraOtherFixtureScreen extends NativeComponent
+{
+    public function render(): Illuminate\View\View
+    {
+        return view('thrifty-camera-fixture', [
+            'scanning' => false, 'interval' => 2, 'facing' => 'off', 'framesDirectory' => '/frames',
+        ]);
+    }
+}
+
 beforeEach(function () {
     View::addLocation(__DIR__.'/views');
+
+    $this->journalPath = sys_get_temp_dir().'/thrifty-camera-test-'.uniqid().'/video-runs.json';
+    app()->instance(VideoRunJournal::class, new VideoRunJournal($this->journalPath));
+});
+
+afterEach(function () {
+    File::deleteDirectory(dirname($this->journalPath));
 });
 
 it('calls the snapshot bridge method with the directory', function () {
@@ -282,6 +325,7 @@ it('keeps the manifest, the facade and the swift bridge classes in sync', functi
     ThriftyCamera::snapshot('/tmp');
     ThriftyCamera::extractVideoFrames('/tmp/v.mov', 2, '/tmp');
     ThriftyCamera::cancelVideoExtraction('run');
+    ThriftyCamera::videoRunStatus('run');
     ThriftyCamera::importImage('/tmp/i.heic', '/tmp');
     ThriftyCamera::shutter();
     ThriftyCamera::deviceTimezone();
@@ -291,6 +335,7 @@ it('keeps the manifest, the facade and the swift bridge classes in sync', functi
     $calledNames = collect($bridge->calls)->pluck('method')->unique()->sort()->values()->all();
     $publicMethods = collect((new ReflectionClass(Thrifty\Camera\ThriftyCamera::class))->getMethods(ReflectionMethod::IS_PUBLIC))
         ->reject(fn (ReflectionMethod $method) => $method->isConstructor())
+        ->reject(fn (ReflectionMethod $method) => in_array($method->getName(), ['takeVideoEvents', 'forgetVideoRun'], true))
         ->count();
 
     $swift = collect(glob($root.'/resources/ios/*.swift'))->map(fn (string $file) => file_get_contents($file))->implode("\n");
@@ -317,4 +362,104 @@ it('overrides the generic plugin permission strings', function () {
         ->NSMicrophoneUsageDescription->toContain('Thrifty')
         ->NSPhotoLibraryUsageDescription->toContain('Thrifty')
         ->NSPhotoLibraryAddUsageDescription->toContain('Thrifty');
+});
+
+it('broadcasts plugin events globally', function (string $class) {
+    expect(is_subclass_of($class, BroadcastsGlobally::class))->toBeTrue();
+})->with([FrameCaptured::class, VideoFramesExtracted::class, CameraFailed::class]);
+
+it('carries a run id on video failures', function () {
+    expect((new CameraFailed('Couldn\'t read that video.', 'run-1'))->runId)->toBe('run-1')
+        ->and((new CameraFailed('Camera access is off.'))->runId)->toBeNull();
+});
+
+it('journals video run events delivered while another screen is active', function () {
+    Native::test(ThriftyCameraOtherFixtureScreen::class)
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/a.jpg', 'source' => 'video', 'width' => 960, 'height' => 540, 'capturedAt' => 'now', 'videoSeconds' => 0.35, 'runId' => 'run-1',
+        ])
+        ->emitNative(CameraFailed::class, ['message' => 'Skipped', 'runId' => 'run-1'])
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/live.jpg', 'source' => 'live', 'width' => 960, 'height' => 1707, 'capturedAt' => 'now',
+        ])
+        ->emitNative(CameraFailed::class, ['message' => 'Camera access is off.'])
+        ->emitNative(VideoFramesExtracted::class, ['count' => 1, 'runId' => 'run-1']);
+
+    $events = ThriftyCamera::takeVideoEvents('run-1');
+
+    expect($events)->toHaveCount(3)
+        ->and($events[0])->toBeInstanceOf(FrameCaptured::class)
+        ->and($events[0]->path)->toBe('/frames/a.jpg')
+        ->and($events[0]->videoSeconds)->toBe(0.35)
+        ->and($events[0]->runId)->toBe('run-1')
+        ->and($events[1])->toBeInstanceOf(CameraFailed::class)
+        ->and($events[1]->message)->toBe('Skipped')
+        ->and($events[2])->toBeInstanceOf(VideoFramesExtracted::class)
+        ->and($events[2]->count)->toBe(1)
+        ->and(ThriftyCamera::takeVideoEvents('run-1'))->toBe([]);
+});
+
+it('journals an event before the active screen handles it', function () {
+    Native::test(ThriftyCameraFixtureScreen::class)
+        ->set('videoRunId', 'run-2')
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/b.jpg', 'source' => 'video', 'width' => 960, 'height' => 540, 'capturedAt' => 'now', 'videoSeconds' => 2.35, 'runId' => 'run-2',
+        ])
+        ->call('consumeVideoEvents')
+        ->assertSet('consumed', ['frame:/frames/b.jpg'])
+        ->call('consumeVideoEvents')
+        ->assertSet('consumed', ['frame:/frames/b.jpg']);
+});
+
+it('keeps an unfinished run and drops a finished one once taken', function () {
+    $journal = app(VideoRunJournal::class);
+    $journal->record(new FrameCaptured('/frames/c.jpg', 'video', 1, 1, 'now', 0.35, 'run-3'));
+
+    ThriftyCamera::takeVideoEvents('run-3');
+
+    expect($journal->status('run-3'))->toBe(['known' => true, 'finished' => false, 'framesEmitted' => 1, 'pending' => 0]);
+
+    $journal->record(new VideoFramesExtracted(1, 'run-3'));
+    ThriftyCamera::takeVideoEvents('run-3');
+
+    expect($journal->status('run-3')['known'])->toBeFalse();
+});
+
+it('forgets a run and deletes its undelivered frames', function () {
+    $directory = dirname($this->journalPath).'/frames';
+    File::ensureDirectoryExists($directory);
+    File::put($directory.'/stale.jpg', 'jpeg');
+    File::put($directory.'/other.jpg', 'jpeg');
+
+    $journal = app(VideoRunJournal::class);
+    $journal->record(new FrameCaptured($directory.'/stale.jpg', 'video', 1, 1, 'now', 0.35, 'run-4'));
+    $journal->record(new FrameCaptured($directory.'/other.jpg', 'video', 1, 1, 'now', 0.35, 'run-5'));
+
+    ThriftyCamera::forgetVideoRun('run-4');
+
+    expect(File::exists($directory.'/stale.jpg'))->toBeFalse()
+        ->and(File::exists($directory.'/other.jpg'))->toBeTrue()
+        ->and($journal->status('run-4')['known'])->toBeFalse()
+        ->and($journal->status('run-5')['pending'])->toBe(1);
+});
+
+it('reads the video run status from the device', function () {
+    $bridge = Native::fakeBridge()->respondTo('ThriftyCamera.VideoRunStatus', ['active' => true, 'framesEmitted' => 3]);
+
+    expect(ThriftyCamera::videoRunStatus('run-6'))->toBe(['active' => true, 'framesEmitted' => 3]);
+
+    $bridge->assertCalled('ThriftyCamera.VideoRunStatus', fn (array $params) => $params === ['runId' => 'run-6']);
+});
+
+it('falls back to the journal for the video run status', function () {
+    Native::fakeBridge();
+    $journal = app(VideoRunJournal::class);
+
+    expect(ThriftyCamera::videoRunStatus('run-7'))->toBe(['active' => false, 'framesEmitted' => 0]);
+
+    $journal->record(new FrameCaptured('/frames/d.jpg', 'video', 1, 1, 'now', 0.35, 'run-7'));
+    expect(ThriftyCamera::videoRunStatus('run-7'))->toBe(['active' => true, 'framesEmitted' => 1]);
+
+    $journal->record(new VideoFramesExtracted(1, 'run-7'));
+    expect(ThriftyCamera::videoRunStatus('run-7'))->toBe(['active' => false, 'framesEmitted' => 1]);
 });

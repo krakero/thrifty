@@ -29,6 +29,11 @@
             "description": "Cancel a running video extraction by runId (it still ends with VideoFramesExtracted)"
         },
         {
+            "name": "ThriftyCamera.VideoRunStatus",
+            "ios": "ThriftyCameraFunctions.VideoRunStatus",
+            "description": "Whether a video extraction run is still active and how many frames it has emitted (synchronous)"
+        },
+        {
             "name": "ThriftyCamera.ImportImage",
             "ios": "ThriftyCameraFunctions.ImportImage",
             "description": "Decode a picked image (HEIC/PNG/JPEG/WebP), apply orientation, downscale to a JPEG frame (async, emits FrameCaptured with source image)"

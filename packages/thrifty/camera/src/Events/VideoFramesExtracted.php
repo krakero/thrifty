@@ -3,8 +3,13 @@
 namespace Thrifty\Camera\Events;
 
 use Illuminate\Foundation\Events\Dispatchable;
+use Native\Mobile\Events\Concerns\BroadcastsGlobally;
 
-class VideoFramesExtracted
+/**
+ * Broadcast globally so the plugin's VideoRunJournal records video-run
+ * events even while another screen is active.
+ */
+class VideoFramesExtracted implements BroadcastsGlobally
 {
     use Dispatchable;
 

@@ -48,6 +48,56 @@ class ThriftyCamera
     }
 
     /**
+     * Whether the extraction is still running and how many frames it has
+     * emitted so far. Asks the device (ThriftyCamera.VideoRunStatus) and
+     * falls back to the event journal when the bridge gives no answer.
+     *
+     * @return array{active: bool, framesEmitted: int}
+     */
+    public function videoRunStatus(string $runId): array
+    {
+        $response = $this->call('ThriftyCamera.VideoRunStatus', ['runId' => $runId]);
+        $status = is_string($response) ? json_decode($response, true) : null;
+
+        if (is_array($status) && array_key_exists('active', $status)) {
+            return [
+                'active' => (bool) $status['active'],
+                'framesEmitted' => (int) ($status['framesEmitted'] ?? 0),
+            ];
+        }
+
+        $journaled = $this->journal()->status($runId);
+
+        return [
+            'active' => $journaled['known'] && ! $journaled['finished'],
+            'framesEmitted' => $journaled['framesEmitted'],
+        ];
+    }
+
+    /**
+     * Remove and return every event of this video run that the Scan screen
+     * hasn't consumed yet, oldest first: FrameCaptured (video),
+     * CameraFailed and the final VideoFramesExtracted. Events are journaled
+     * whichever screen is active, before any #[On] handler runs, so this
+     * also returns the event currently being handled.
+     *
+     * @return list<Events\FrameCaptured|Events\VideoFramesExtracted|Events\CameraFailed>
+     */
+    public function takeVideoEvents(string $runId): array
+    {
+        return $this->journal()->take($runId);
+    }
+
+    /**
+     * Stop tracking a run (after cancelling or replacing it) and delete the
+     * JPEGs of any of its frames that were never taken.
+     */
+    public function forgetVideoRun(string $runId): void
+    {
+        $this->journal()->forget($runId);
+    }
+
+    /**
      * Normalize a picked image (HEIC/HEIF/PNG/JPEG/WebP) into a JPEG frame:
      * EXIF orientation applied, at most 960px wide, quality 0.82 (the web's
      * upload compression).
@@ -124,6 +174,11 @@ class ThriftyCamera
             )),
             'summary' => (string) ($card['summary'] ?? ''),
         ]);
+    }
+
+    protected function journal(): VideoRunJournal
+    {
+        return app(VideoRunJournal::class);
     }
 
     /**

@@ -14,7 +14,8 @@ use Illuminate\Support\Facades\Storage;
 /**
  * A detected sellable item, deduplicated across frames and sessions by fingerprint.
  *
- * Bounding box coordinates are normalized 0-1000 relative to the frame at `thumbnail_path`.
+ * Bounding box coordinates are normalized 0-1000 relative to the full frame at `frameRun->frame_path`.
+ * `thumbnail_path` is usually a padded crop of that box (`thumbs/{id}.jpg`), so never draw the box over it.
  */
 class Item extends Model
 {

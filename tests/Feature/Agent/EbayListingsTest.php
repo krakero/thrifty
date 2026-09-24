@@ -96,3 +96,19 @@ it('reports a search failure to the model instead of throwing', function () use 
     expect(app(EbayListings::class)->search($credentials, 'walkman'))
         ->toBe(['listings' => [], 'total' => 0, 'error' => 'eBay search failed with status 503']);
 });
+
+it('shares one timeout between the token fetch and the search', function () use ($credentials) {
+    Http::fake([
+        EbayListings::TokenUrl => function () {
+            $this->travel(30)->seconds();
+
+            return Http::response(['access_token' => 'token', 'expires_in' => 7200]);
+        },
+        EbayListings::SearchUrl.'*' => Http::response(['itemSummaries' => []]),
+    ]);
+
+    expect(app(EbayListings::class)->search($credentials, 'walkman', 8, 30))
+        ->toBe(['listings' => [], 'total' => 0, 'error' => 'eBay search timed out']);
+
+    Http::assertSentCount(1);
+});

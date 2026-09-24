@@ -16,11 +16,6 @@ class FrameAgent
 
     public const MaxTurns = 10;
 
-    /**
-     * Overall wall-clock budget for one frame's agent run, across all turns and retries.
-     */
-    public const DeadlineSeconds = 150;
-
     public const AgentInputText = 'Analyze this frame. Return and value only clearly identifiable items that are likely being offered for sale.';
 
     public const Instructions = <<<'TEXT'
@@ -94,7 +89,7 @@ TEXT;
     }
 
     /**
-     * Run the agent over one frame.
+     * Run the agent over one frame, within the caller's deadline (shared by every turn, retry and tool call).
      *
      * @param  array{clientId: string, clientSecret: string}|null  $ebayCredentials
      * @return array{
@@ -106,9 +101,8 @@ TEXT;
      *
      * @throws AnalysisFailed
      */
-    public function run(#[\SensitiveParameter] string $apiKey, string $imageDataUrl, string $scanSessionId, string $findCriteria, ?array $ebayCredentials): array
+    public function run(#[\SensitiveParameter] string $apiKey, string $imageDataUrl, string $scanSessionId, string $findCriteria, ?array $ebayCredentials, Deadline $deadline): array
     {
-        $deadline = Deadline::in(self::DeadlineSeconds);
         $input = [self::userMessage(self::buildInputText($findCriteria), $imageDataUrl)];
         $previousResponseId = null;
         $events = [];

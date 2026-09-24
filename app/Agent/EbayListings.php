@@ -62,19 +62,28 @@ class EbayListings
     }
 
     /**
-     * Run the tool. Failures are reported to the model in the result rather than thrown.
+     * Run the tool. The token fetch and the search share one `$timeoutSeconds` cap. Failures are reported to the model
+     * in the result rather than thrown.
      *
      * @param  array{clientId: string, clientSecret: string}  $credentials
      * @return array{listings: list<array{title: string, priceCents: ?int, shippingCents: ?int, currency: string, condition: ?string, url: ?string}>, total: int, error?: string}
      */
     public function search(#[\SensitiveParameter] array $credentials, string $query, int $limit = 8, float $timeoutSeconds = self::RequestTimeoutSeconds): array
     {
+        $callDeadline = Deadline::in($timeoutSeconds);
+
         try {
-            $response = Http::withToken($this->accessToken($credentials, $timeoutSeconds))
+            $token = $this->accessToken($credentials, $callDeadline->cap($timeoutSeconds));
+
+            if ($callDeadline->expired()) {
+                return ['listings' => [], 'total' => 0, 'error' => 'eBay search timed out'];
+            }
+
+            $response = Http::withToken($token)
                 ->withHeaders(['X-EBAY-C-MARKETPLACE-ID' => 'EBAY_US'])
                 ->acceptJson()
-                ->connectTimeout(min(10, $timeoutSeconds))
-                ->timeout($timeoutSeconds)
+                ->connectTimeout($callDeadline->cap(10))
+                ->timeout($callDeadline->cap($timeoutSeconds))
                 ->get(self::SearchUrl, ['q' => $query, 'limit' => $limit]);
 
             if ($response->failed()) {

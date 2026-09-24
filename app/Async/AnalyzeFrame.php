@@ -4,7 +4,6 @@ namespace App\Async;
 
 use App\Agent\Exceptions\AnalysisFailed;
 use App\Agent\Exceptions\MissingApiKey;
-use App\Agent\FrameAgent;
 use App\Agent\FrameAnalyzer;
 use Native\Mobile\AsyncTask;
 use Native\Mobile\PendingAsyncTask;
@@ -18,7 +17,8 @@ class AnalyzeFrame extends AsyncTask
 {
     /**
      * The watchdog starts when the task is queued, and the iOS pool assigns its four slots round-robin, so a task can
-     * wait behind up to three others that each use their full {@see FrameAgent::DeadlineSeconds} budget.
+     * wait behind up to three others that each use their full {@see FrameAnalyzer::BudgetSeconds} budget
+     * (plus {@see FrameAnalyzer::WorstCaseOverrunSeconds}).
      */
     public const TimeoutSeconds = 600;
 

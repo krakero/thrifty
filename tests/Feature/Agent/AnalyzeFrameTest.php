@@ -636,8 +636,85 @@ it('stops the agent once the frame budget is spent', function () {
         ->and(FrameRun::sole())->status->toBe(FrameRunStatus::Failed)->error->toBe('Luna took too long to analyze this frame.');
 });
 
-it('keeps the async watchdog above four frames queued on one slot', function () {
-    expect(AnalyzeFrame::TimeoutSeconds)->toBeGreaterThanOrEqual(4 * FrameAgent::DeadlineSeconds);
+it('keeps the async watchdog above four worst-case frames queued on one slot', function () {
+    $busyTimeoutSeconds = config('database.connections.sqlite.busy_timeout') / 1000;
+    $worstCaseFrame = FrameAnalyzer::BudgetSeconds + FrameAnalyzer::WorstCaseOverrunSeconds;
+
+    expect(FrameAnalyzer::WorstCaseOverrunSeconds)->toBeGreaterThanOrEqual(2 * $busyTimeoutSeconds)
+        ->and(FrameAnalyzer::PersistReserveSeconds)->toBeLessThan(FrameAnalyzer::BudgetSeconds)
+        ->and(AnalyzeFrame::TimeoutSeconds - 4 * $worstCaseFrame)->toBeGreaterThanOrEqual(60);
+});
+
+it('counts the frame read and the save against the same budget as the agent', function () {
+    agentFrame();
+    $loop = agentResponse('resp_loop', [agentFunctionCall('check_previous_scans', ['candidates' => [agentCandidate()]], 'call_1')]);
+    Http::fake([OpenAiResponses::Url => function () use ($loop) {
+        $this->travel(60)->seconds();
+
+        return Http::response($loop);
+    }]);
+
+    expect(fn () => analyze($this->session->id))->toThrow(AnalysisFailed::class, 'Luna took too long to analyze this frame.');
+
+    // 120s budget minus the 15s save reserve leaves the agent 105s: two 60s turns, then it stops.
+    expect(openAiRequests())->toHaveCount(2);
+});
+
+it('stops retrying a locked save once the frame budget is spent', function () {
+    agentFrame();
+    fakeOpenAi([agentFinalResponse([agentCandidate()])]);
+    $attempts = 0;
+    Item::saving(function () use (&$attempts) {
+        $attempts++;
+        $this->travel(FrameAnalyzer::BudgetSeconds)->seconds();
+
+        throw new QueryException('sqlite', 'insert into items', [], new PDOException('SQLSTATE[HY000]: General error: 5 database is locked'));
+    });
+
+    expect(fn () => analyze($this->session->id))->toThrow(AnalysisFailed::class, "Couldn't save this frame's finds. Try again.");
+
+    expect($attempts)->toBe(1)->and(FrameRun::sole()->status)->toBe(FrameRunStatus::Failed);
+});
+
+it('does not crop candidates that will not be saved and removes crops merged away', function () {
+    agentFrame();
+    fakeOpenAi([agentFinalResponse([
+        agentCandidate(['fingerprint' => '', 'name' => '!!!']),
+        agentCandidate(),
+        agentCandidate(['fingerprint' => 'Sony Walkman WM-FX195 cassette player']),
+    ])]);
+    $frameRunId = (string) Str::ulid();
+
+    $result = analyze($this->session->id, frameRunId: $frameRunId);
+
+    expect($result['itemIds'])->toBe([Item::sole()->id])
+        ->and(Item::sole())->seen_count->toBe(2)->thumbnail_path->toBe("thumbs/{$frameRunId}-2.jpg");
+    expect(Storage::disk('local')->allFiles('thumbs'))->toBe(["thumbs/{$frameRunId}-2.jpg"]);
+});
+
+it('fails fast on a frame run id that already exists without touching its files', function () {
+    agentFrame();
+    fakeOpenAi([agentFinalResponse([agentCandidate()])]);
+    $frameRunId = (string) Str::ulid();
+    analyze($this->session->id, frameRunId: $frameRunId);
+    $thumbnail = Item::sole()->thumbnail_path;
+
+    expect(fn () => analyze($this->session->id, frameRunId: $frameRunId))
+        ->toThrow(AnalysisFailed::class, 'This frame was already analyzed.');
+
+    expect(FrameRun::sole())->status->toBe(FrameRunStatus::Completed)
+        ->and(AppStat::current()->frames_processed)->toBe(1);
+    Storage::disk('local')->assertExists(['frames/frame-1.jpg', $thumbnail]);
+    expect(openAiRequests())->toHaveCount(1);
+});
+
+it('keeps milliseconds on a scan session it creates', function () {
+    agentFrame();
+    fakeOpenAi([agentFinalResponse([])]);
+
+    analyze('01K5ZZZZZZZZZZZZZZZZZZZZZZ', capturedAt: '2026-09-23T15:00:00.123Z');
+
+    expect(ScanSession::find('01K5ZZZZZZZZZZZZZZZZZZZZZZ')->started_at->format('H:i:s.v'))->toBe('15:00:00.123');
 });
 
 it('matches the web app instructions and input text byte for byte', function () {

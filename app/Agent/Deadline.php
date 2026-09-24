@@ -11,9 +11,17 @@ final class Deadline
 {
     public function __construct(private CarbonImmutable $expiresAt) {}
 
-    public static function in(int $seconds): self
+    public static function in(float $seconds): self
     {
-        return new self(CarbonImmutable::now()->addSeconds($seconds));
+        return new self(CarbonImmutable::now()->addMilliseconds((int) round($seconds * 1000)));
+    }
+
+    /**
+     * The same deadline, ending earlier to leave time for work that must follow.
+     */
+    public function withReserve(float $seconds): self
+    {
+        return new self($this->expiresAt->subMilliseconds((int) round($seconds * 1000)));
     }
 
     public function remainingSeconds(): float

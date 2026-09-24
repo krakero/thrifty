@@ -30,7 +30,25 @@ class FrameAnalyzer
     /** Candidates whose fingerprints overlap at least this much with a saved find are treated as the same find. */
     public const FingerprintMatchThreshold = 0.72;
 
+    /**
+     * Wall-clock budget for one frame, from the frame read through the final write.
+     */
+    public const BudgetSeconds = 120;
+
+    /**
+     * Held back from the agent so crops and the save still fit inside the budget.
+     */
+    public const PersistReserveSeconds = 15;
+
+    /**
+     * How far a run can pass its budget: the write retry stops at the deadline, but the attempt in progress and the
+     * failed-run record may each wait out SQLite's busy_timeout (5s).
+     */
+    public const WorstCaseOverrunSeconds = 15;
+
     private const WriteAttempts = 6;
+
+    private const DatabaseDateFormat = 'Y-m-d H:i:s.v';
 
     public function __construct(
         private AppSettings $settings,
@@ -53,6 +71,12 @@ class FrameAnalyzer
     public function analyze(string $scanSessionId, string $framePath, string $capturedAt, string $frameRunId, string $findCriteria): array
     {
         $started = hrtime(true);
+        $deadline = Deadline::in(self::BudgetSeconds);
+
+        if (FrameRun::query()->whereKey($frameRunId)->exists()) {
+            throw new AnalysisFailed('This frame was already analyzed.');
+        }
+
         $disk = Storage::disk('local');
         $apiKey = $this->settings->openAiApiKey();
 
@@ -76,8 +100,8 @@ class FrameAnalyzer
             $this->withWriteRetry(fn () => ScanSession::query()->insertOrIgnore([
                 'id' => $scanSessionId,
                 'source_type' => ScanSource::Camera->value,
-                'started_at' => $capturedAt,
-            ]));
+                'started_at' => $capturedAt->format(self::DatabaseDateFormat),
+            ]), $deadline);
 
             $result = $this->agent->run(
                 $apiKey,
@@ -85,6 +109,7 @@ class FrameAnalyzer
                 $scanSessionId,
                 $findCriteria,
                 $this->settings->ebayCredentials(),
+                $deadline->withReserve(self::PersistReserveSeconds),
             );
 
             $thumbnailPaths = $this->writeThumbnails($frameBytes, $result['analysis']['items'], $frameRunId, $disk);
@@ -92,18 +117,24 @@ class FrameAnalyzer
 
             $saved = $this->withWriteRetry(
                 fn (): array => $this->persist($result, $thumbnailPaths, $proposedItemIds, $frameRunId, $scanSessionId, $framePath, $capturedAt, $started),
+                $deadline,
             );
         } catch (Throwable $exception) {
             $failure = self::userFacingFailure($exception);
             $disk->delete([$framePath, ...array_filter($thumbnailPaths)]);
-            $this->recordFailure($failure, $frameRunId, $scanSessionId, $capturedAt, $findCriteria, $started);
+            $this->recordFailure($failure, $frameRunId, $scanSessionId, $capturedAt, $findCriteria, $started, $deadline);
 
             throw $failure;
         }
 
         [$itemIds, $newItemIds, $stats, $replacedThumbnails, $previousFrameRunIds] = $saved;
 
-        $this->releaseUnreferencedFiles($itemIds === [] ? [$framePath] : [], $replacedThumbnails, $previousFrameRunIds, $disk);
+        $this->releaseUnreferencedFiles(
+            [...($itemIds === [] ? [$framePath] : []), ...array_filter($thumbnailPaths)],
+            $replacedThumbnails,
+            $previousFrameRunIds,
+            $disk,
+        );
 
         return [
             'frameRunId' => $frameRunId,
@@ -146,7 +177,7 @@ class FrameAnalyzer
             $previousFrameRunIds = [];
 
             foreach ($result['analysis']['items'] as $index => $candidate) {
-                $proposedFingerprint = Normalize::normalizeFingerprint($candidate['fingerprint'] ?: $candidate['name']);
+                $proposedFingerprint = self::proposedFingerprint($candidate);
 
                 if ($proposedFingerprint === '') {
                     continue;
@@ -235,8 +266,16 @@ class FrameAnalyzer
 
             AppStat::record(1, count($itemIds), $result['searchesPerformed'], $result['modelCalls']);
 
-            return [$itemIds, $newItemIds, AppStat::current(), array_values(array_diff($replacedThumbnails, [$framePath], $thumbnailPaths)), array_values(array_filter(array_diff($previousFrameRunIds, [$frameRunId])))];
+            return [$itemIds, $newItemIds, AppStat::current(), array_values(array_diff($replacedThumbnails, [$framePath])), array_values(array_filter(array_diff($previousFrameRunIds, [$frameRunId])))];
         });
+    }
+
+    /**
+     * @param  array<string, mixed>  $candidate
+     */
+    private static function proposedFingerprint(array $candidate): string
+    {
+        return Normalize::normalizeFingerprint($candidate['fingerprint'] ?: $candidate['name']);
     }
 
     /**
@@ -273,14 +312,14 @@ class FrameAnalyzer
     /**
      * Mirror the Worker's failure path: a failed frame run (with the audit input) and one more processed frame.
      */
-    private function recordFailure(AnalysisFailed $failure, string $frameRunId, string $scanSessionId, CarbonImmutable $capturedAt, string $findCriteria, int $started): void
+    private function recordFailure(AnalysisFailed $failure, string $frameRunId, string $scanSessionId, CarbonImmutable $capturedAt, string $findCriteria, int $started, Deadline $deadline): void
     {
         try {
             $this->withWriteRetry(fn () => DB::transaction(function () use ($failure, $frameRunId, $scanSessionId, $capturedAt, $findCriteria, $started): void {
                 ScanSession::query()->insertOrIgnore([
                     'id' => $scanSessionId,
                     'source_type' => ScanSource::Camera->value,
-                    'started_at' => $capturedAt,
+                    'started_at' => $capturedAt->format(self::DatabaseDateFormat),
                 ]);
 
                 FrameRun::query()->forceCreate([
@@ -305,7 +344,7 @@ class FrameAnalyzer
                 ]);
 
                 AppStat::record(1, 0, 0, 0);
-            }));
+            }), $deadline);
         } catch (Throwable $recordingFailure) {
             report($recordingFailure);
         }
@@ -333,7 +372,13 @@ class FrameAnalyzer
      */
     private function writeThumbnails(string $frameBytes, array $candidates, string $frameRunId, Filesystem $disk): array
     {
-        $crops = $this->thumbnailer->cropAll($frameBytes, array_column($candidates, 'boundingBox'));
+        $persistable = array_filter($candidates, fn (array $candidate): bool => self::proposedFingerprint($candidate) !== '');
+        $crops = array_fill(0, count($candidates), null);
+
+        foreach ($this->thumbnailer->cropAll($frameBytes, array_values(array_column($persistable, 'boundingBox'))) as $position => $bytes) {
+            $crops[array_keys($persistable)[$position]] = $bytes;
+        }
+
         $paths = [];
 
         foreach ($crops as $index => $bytes) {
@@ -387,20 +432,25 @@ class FrameAnalyzer
     }
 
     /**
-     * Run a write, retrying with backoff while another analysis thread holds the SQLite write lock.
+     * Run a write, retrying with backoff while another analysis thread holds the SQLite write lock, but never past the
+     * frame's deadline (the first attempt always runs).
      *
      * @template T
      *
      * @param  callable(): T  $write
      * @return T
      */
-    private function withWriteRetry(callable $write): mixed
+    private function withWriteRetry(callable $write, ?Deadline $deadline = null): mixed
     {
         for ($attempt = 1; ; $attempt++) {
             try {
                 return $write();
             } catch (Throwable $exception) {
-                if ($attempt >= self::WriteAttempts || ! $this->concurrencyErrors->causedByConcurrencyError($exception)) {
+                $retryable = $attempt < self::WriteAttempts
+                    && ! $deadline?->expired()
+                    && $this->concurrencyErrors->causedByConcurrencyError($exception);
+
+                if (! $retryable) {
                     throw $exception;
                 }
 

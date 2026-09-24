@@ -43,9 +43,16 @@ enum ThriftyCameraEvents {
         send(videoFramesExtracted, payload)
     }
 
-    static func cameraFailed(_ message: String) {
+    /// `runId` is set when the failure belongs to a video extraction run.
+    static func cameraFailed(_ message: String, runId: String? = nil) {
         print("[ThriftyCamera] \(message)")
-        send(cameraFailed, ["message": message])
+
+        var payload: [String: Any] = ["message": message]
+        if let runId = runId {
+            payload["runId"] = runId
+        }
+
+        send(cameraFailed, payload)
     }
 
     private static func send(_ event: String, _ payload: [String: Any]) {

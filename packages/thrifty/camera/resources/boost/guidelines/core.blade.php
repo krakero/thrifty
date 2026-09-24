@@ -58,4 +58,39 @@ public function frameCaptured(string $path, string $source, int $width, int $hei
 - Video plays through in real time: a frame at 0.35s, then every `interval` seconds of wall-clock time, until the video ends. Ignore frames whose `runId` isn't the current run.
 - `importImage()` accepts anything iOS decodes (HEIC/HEIF, PNG, JPEG, WebP), applies EXIF orientation and writes a JPEG at most 960px wide (quality 0.82, like the web's uploads), so on-device PHP never has to read HEIC. Use it for gallery picks before analysis.
 - `VideoFramesExtracted(int $count, ?string $runId = null)` — fires exactly once per extraction on every exit path: the end of the video, a failure (after `CameraFailed`) or `cancelVideoExtraction()`.
-- `CameraFailed(string $message)` — user-presentable message (permission denied, no camera, unreadable video, etc.).
+- `CameraFailed(string $message, ?string $runId = null)` — user-presentable message (permission denied, no camera, unreadable video, etc.). `runId` is set when the failure belongs to a video run.
+
+### Video runs while another screen is showing
+
+The events implement `BroadcastsGlobally`, and the plugin journals every event that carries a `runId` (via Laravel's dispatcher, before the active screen's `#[On]` handler runs), whichever screen is active. The screen that started the run consumes the journal instead of the direct payload:
+
+@verbatim
+<code-snippet name="Consuming a video run" lang="php">
+#[On(FrameCaptured::class)]
+#[On(VideoFramesExtracted::class)]
+#[On(CameraFailed::class)]
+public function videoEvent(?string $runId = null): void
+{
+    if ($runId !== null && $runId === $this->videoRunId) {
+        $this->drainVideoRun();
+    }
+}
+
+public function onResume(): void
+{
+    $this->drainVideoRun(); // catch up on everything delivered while covered
+}
+
+private function drainVideoRun(): void
+{
+    foreach (ThriftyCamera::takeVideoEvents($this->videoRunId) as $event) {
+        // FrameCaptured | CameraFailed | VideoFramesExtracted, oldest first
+    }
+}
+</code-snippet>
+@endverbatim
+
+- `takeVideoEvents($runId)` removes what it returns, so each event is handled exactly once (the event currently being handled is included).
+- `forgetVideoRun($runId)` after cancelling or replacing a run drops its journal and deletes the JPEGs of frames never taken.
+- `videoRunStatus($runId)` returns `['active' => bool, 'framesEmitted' => int]` from the device (falls back to the journal).
+- Video sampling pauses while the app is in the background and the run ends exactly at the end of the video.

@@ -74,11 +74,11 @@ struct ThriftyFindCard {
 /// dark price-tag background.
 enum ThriftyFindCardRenderer {
     private static let width: CGFloat = 1080
-    private static let padding: CGFloat = 64
+    fileprivate static let padding: CGFloat = 64
     private static let background = UIColor(red: 0x14 / 255, green: 0x12 / 255, blue: 0x10 / 255, alpha: 1)
-    private static let text = UIColor(red: 0xF5 / 255, green: 0xEF / 255, blue: 0xE6 / 255, alpha: 1)
+    fileprivate static let text = UIColor(red: 0xF5 / 255, green: 0xEF / 255, blue: 0xE6 / 255, alpha: 1)
     private static let tomato = UIColor(red: 0xFF / 255, green: 0x6B / 255, blue: 0x4A / 255, alpha: 1)
-    private static let mint = UIColor(red: 0x5E / 255, green: 0xE6 / 255, blue: 0xA8 / 255, alpha: 1)
+    fileprivate static let mint = UIColor(red: 0x5E / 255, green: 0xE6 / 255, blue: 0xA8 / 255, alpha: 1)
 
     static func render(_ card: ThriftyFindCard) -> UIImage {
         let contentWidth = width - padding * 2
@@ -98,7 +98,7 @@ enum ThriftyFindCardRenderer {
         let footer = attributed("Found with Thrifty", font: font("DMMono-Medium", size: 24, fallback: .monospacedSystemFont(ofSize: 24, weight: .medium)), color: text.withAlphaComponent(0.5))
 
         let rowFont = font("DMMono-Medium", size: 30, fallback: .monospacedSystemFont(ofSize: 30, weight: .medium))
-        let rowHeight: CGFloat = 64
+        let rowLayouts = card.rows.map { RowLayout(row: $0, font: rowFont, contentWidth: contentWidth) }
 
         // Measure
         var cursor = (imageRect?.maxY ?? 0) + padding
@@ -110,7 +110,7 @@ enum ThriftyFindCardRenderer {
 
         cursor += brandHeight + 16 + titleHeight
         cursor += subtitleHeight > 0 ? 12 + subtitleHeight : 0
-        cursor += card.rows.isEmpty ? 0 : 36 + CGFloat(card.rows.count) * rowHeight
+        cursor += rowLayouts.isEmpty ? 0 : 36 + rowLayouts.reduce(0) { $0 + $1.height }
         cursor += summaryHeight > 0 ? 36 + summaryHeight : 0
         cursor += 48 + footerHeight + padding
 
@@ -143,9 +143,9 @@ enum ThriftyFindCardRenderer {
 
             if !card.rows.isEmpty {
                 y += 36
-                for row in card.rows {
-                    drawRow(row, font: rowFont, top: y, height: rowHeight, contentWidth: contentWidth)
-                    y += rowHeight
+                for layout in rowLayouts {
+                    layout.draw(top: y)
+                    y += layout.height
                 }
             }
 
@@ -188,28 +188,55 @@ enum ThriftyFindCardRenderer {
         }
     }
 
-    private static func drawRow(_ row: ThriftyFindCard.Row, font: UIFont, top: CGFloat, height: CGFloat, contentWidth: CGFloat) {
-        let divider = UIBezierPath(rect: CGRect(x: padding, y: top, width: contentWidth, height: 2))
-        text.withAlphaComponent(0.12).setFill()
-        divider.fill()
+    /// A label/value row. Long values (brand/model, descriptions, comparable
+    /// titles) wrap to at most three lines instead of being cut off.
+    private struct RowLayout {
+        static let maxLines = 3
+        static let verticalPadding: CGFloat = 16
+        static let gutter: CGFloat = 24
 
-        let isResale = row.label.lowercased().contains("resale") || row.label.lowercased().contains("profit")
-        let label = attributed(row.label.uppercased(), font: font, color: text.withAlphaComponent(0.6), kern: 1)
-        let value = attributed(row.value, font: font, color: isResale ? mint : text, alignment: .right)
+        let label: NSAttributedString
+        let value: NSAttributedString
+        let labelRect: CGRect
+        let valueRect: CGRect
+        let height: CGFloat
 
-        let lineHeight = font.lineHeight
-        let textTop = top + (height - lineHeight) / 2
-        let half = contentWidth / 2
+        init(row: ThriftyFindCard.Row, font: UIFont, contentWidth: CGFloat) {
+            let lowered = row.label.lowercased()
+            let isResale = lowered.contains("resale") || lowered.contains("profit")
 
-        label.draw(with: CGRect(x: padding, y: textTop, width: half, height: lineHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], context: nil)
-        value.draw(with: CGRect(x: padding + half, y: textTop, width: half, height: lineHeight), options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], context: nil)
+            label = ThriftyFindCardRenderer.attributed(row.label.uppercased(), font: font, color: ThriftyFindCardRenderer.text.withAlphaComponent(0.6), kern: 1)
+            value = ThriftyFindCardRenderer.attributed(row.value, font: font, color: isResale ? ThriftyFindCardRenderer.mint : ThriftyFindCardRenderer.text, alignment: .right)
+
+            let labelWidth = (contentWidth - Self.gutter) * 0.4
+            let valueWidth = contentWidth - Self.gutter - labelWidth
+            let maxTextHeight = ceil(font.lineHeight * CGFloat(Self.maxLines))
+
+            let labelHeight = min(ThriftyFindCardRenderer.height(of: label, width: labelWidth), maxTextHeight)
+            let valueHeight = min(ThriftyFindCardRenderer.height(of: value, width: valueWidth), maxTextHeight)
+
+            labelRect = CGRect(x: ThriftyFindCardRenderer.padding, y: Self.verticalPadding, width: labelWidth, height: labelHeight)
+            valueRect = CGRect(x: ThriftyFindCardRenderer.padding + labelWidth + Self.gutter, y: Self.verticalPadding, width: valueWidth, height: valueHeight)
+            height = max(labelHeight, valueHeight, font.lineHeight) + Self.verticalPadding * 2
+        }
+
+        func draw(top: CGFloat) {
+            let divider = UIBezierPath(rect: CGRect(x: labelRect.minX, y: top, width: valueRect.maxX - labelRect.minX, height: 2))
+            ThriftyFindCardRenderer.text.withAlphaComponent(0.12).setFill()
+            divider.fill()
+
+            // Truncates only past the third line.
+            let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+            label.draw(with: labelRect.offsetBy(dx: 0, dy: top), options: options, context: nil)
+            value.draw(with: valueRect.offsetBy(dx: 0, dy: top), options: options, context: nil)
+        }
     }
 
     private static func font(_ name: String, size: CGFloat, fallback: UIFont) -> UIFont {
         UIFont(name: name, size: size) ?? fallback
     }
 
-    private static func attributed(
+    fileprivate static func attributed(
         _ string: String,
         font: UIFont,
         color: UIColor,
@@ -230,7 +257,7 @@ enum ThriftyFindCardRenderer {
         ])
     }
 
-    private static func height(of string: NSAttributedString, width: CGFloat) -> CGFloat {
+    fileprivate static func height(of string: NSAttributedString, width: CGFloat) -> CGFloat {
         ceil(string.boundingRect(
             with: CGSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],

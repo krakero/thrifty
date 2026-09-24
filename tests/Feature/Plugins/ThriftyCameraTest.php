@@ -94,6 +94,47 @@ class ThriftyCameraOtherFixtureScreen extends NativeComponent
     }
 }
 
+class ThriftyCameraScanStyleFixtureScreen extends NativeComponent
+{
+    public ?string $videoRunId = 'run-current';
+
+    /** @var list<string> */
+    public array $handled = [];
+
+    #[On(FrameCaptured::class)]
+    #[On(VideoFramesExtracted::class)]
+    #[On(CameraFailed::class)]
+    public function videoEvent(?string $runId = null): void
+    {
+        if ($runId !== null && $runId === $this->videoRunId) {
+            $this->drainVideoRun();
+        }
+    }
+
+    public function onResume(): void
+    {
+        $this->drainVideoRun();
+    }
+
+    private function drainVideoRun(): void
+    {
+        foreach (ThriftyCamera::takeVideoEvents($this->videoRunId) as $event) {
+            $this->handled[] = class_basename($event).':'.match (true) {
+                $event instanceof FrameCaptured => basename($event->path),
+                $event instanceof CameraFailed => $event->message,
+                $event instanceof VideoFramesExtracted => $event->count,
+            };
+        }
+    }
+
+    public function render(): Illuminate\View\View
+    {
+        return view('thrifty-camera-fixture', [
+            'scanning' => false, 'interval' => 2, 'facing' => 'off', 'framesDirectory' => '/frames',
+        ]);
+    }
+}
+
 beforeEach(function () {
     View::addLocation(__DIR__.'/views');
 
@@ -462,4 +503,32 @@ it('falls back to the journal for the video run status', function () {
 
     $journal->record(new VideoFramesExtracted(1, 'run-7'));
     expect(ThriftyCamera::videoRunStatus('run-7'))->toBe(['active' => false, 'framesEmitted' => 1]);
+});
+
+it('lets a scan screen catch up on a video run delivered while it was covered', function () {
+    $frame = fn (string $name, string $runId) => [
+        'path' => "/frames/{$name}.jpg", 'source' => 'video', 'width' => 960, 'height' => 540, 'capturedAt' => 'now', 'videoSeconds' => 1.0, 'runId' => $runId,
+    ];
+
+    // Delivered while Settings is showing.
+    Native::test(ThriftyCameraOtherFixtureScreen::class)
+        ->emitNative(FrameCaptured::class, $frame('covered-1', 'run-current'))
+        ->emitNative(FrameCaptured::class, $frame('stale', 'run-old'))
+        ->emitNative(CameraFailed::class, ['message' => 'Skipped a frame', 'runId' => 'run-current']);
+
+    Native::test(ThriftyCameraScanStyleFixtureScreen::class)
+        ->call('onResume')
+        ->assertSet('handled', ['FrameCaptured:covered-1.jpg', 'CameraFailed:Skipped a frame'])
+        ->emitNative(FrameCaptured::class, $frame('live-1', 'run-current'))
+        ->emitNative(FrameCaptured::class, $frame('stale-2', 'run-old'))
+        ->emitNative(VideoFramesExtracted::class, ['count' => 2, 'runId' => 'run-current'])
+        ->assertSet('handled', [
+            'FrameCaptured:covered-1.jpg',
+            'CameraFailed:Skipped a frame',
+            'FrameCaptured:live-1.jpg',
+            'VideoFramesExtracted:2',
+        ]);
+
+    expect(app(VideoRunJournal::class)->status('run-current')['known'])->toBeFalse()
+        ->and(app(VideoRunJournal::class)->status('run-old')['pending'])->toBe(2);
 });

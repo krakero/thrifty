@@ -84,6 +84,22 @@ enum ThriftyCameraFunctions {
         }
     }
 
+    // MARK: - ThriftyCamera.VideoRunStatus
+
+    /// Whether a video extraction run is still active and how many frames it
+    /// has emitted, so the Scan screen can re-sync after being covered.
+    class VideoRunStatus: BridgeFunction {
+        func execute(parameters: [String: Any]) throws -> [String: Any] {
+            guard let runId = parameters["runId"] as? String, !runId.isEmpty else {
+                throw BridgeError.invalidParameters("runId is required")
+            }
+
+            let status = ThriftyVideoFrameExtractor.status(runId: runId)
+
+            return ["active": status.active, "framesEmitted": status.framesEmitted]
+        }
+    }
+
     // MARK: - ThriftyCamera.Shutter
 
     /// Plays the snapshot feedback: a short shutter click and a light haptic.
@@ -232,11 +248,17 @@ enum ThriftyVideoFrameExtractor {
     private static let lock = NSLock()
     private static var runs: [String: Task<Void, Never>] = [:]
 
+    /// Frames emitted per run, kept after the run ends (most recent runs only).
+    private static var framesEmitted: [String: Int] = [:]
+    private static var framesEmittedOrder: [String] = []
+    private static let maxRememberedRuns = 50
+
     static func start(runId: String, videoPath: String, interval: Double, directory: String) {
         lock.lock()
         defer { lock.unlock() }
 
         runs[runId]?.cancel()
+        rememberRun(runId)
         runs[runId] = Task.detached(priority: .userInitiated) {
             let count = await extract(runId: runId, videoPath: videoPath, interval: interval, directory: directory)
 
@@ -245,6 +267,30 @@ enum ThriftyVideoFrameExtractor {
             lock.withLock {
                 runs[runId] = nil
             }
+        }
+    }
+
+    static func status(runId: String) -> (active: Bool, framesEmitted: Int) {
+        lock.withLock {
+            (runs[runId] != nil, framesEmitted[runId] ?? 0)
+        }
+    }
+
+    /// Call with the lock held.
+    private static func rememberRun(_ runId: String) {
+        if framesEmitted[runId] == nil {
+            framesEmittedOrder.append(runId)
+        }
+        framesEmitted[runId] = 0
+
+        while framesEmittedOrder.count > maxRememberedRuns {
+            framesEmitted[framesEmittedOrder.removeFirst()] = nil
+        }
+    }
+
+    private static func frameEmitted(runId: String) {
+        lock.withLock {
+            framesEmitted[runId, default: 0] += 1
         }
     }
 
@@ -268,28 +314,42 @@ enum ThriftyVideoFrameExtractor {
         let url = ThriftyImageImporter.fileURL(videoPath)
 
         guard FileManager.default.fileExists(atPath: url.path) else {
-            ThriftyCameraEvents.cameraFailed("Couldn't find that video.")
+            ThriftyCameraEvents.cameraFailed("Couldn't find that video.", runId: runId)
             return 0
         }
 
         let asset = AVURLAsset(url: url)
 
         let duration: Double
+        let orientedSize: CGSize
         do {
             duration = try await asset.load(.duration).seconds
             let tracks = try await asset.loadTracks(withMediaType: .video)
 
-            guard !tracks.isEmpty, duration.isFinite, duration > 0 else {
-                ThriftyCameraEvents.cameraFailed("That file doesn't contain any video to scan.")
+            guard let track = tracks.first, duration.isFinite, duration > 0 else {
+                ThriftyCameraEvents.cameraFailed("That file doesn't contain any video to scan.", runId: runId)
                 return 0
             }
+
+            let (naturalSize, transform) = try await track.load(.naturalSize, .preferredTransform)
+            let transformed = naturalSize.applying(transform)
+            orientedSize = CGSize(width: abs(transformed.width), height: abs(transformed.height))
         } catch {
-            ThriftyCameraEvents.cameraFailed("Couldn't read that video: \(error.localizedDescription)")
+            ThriftyCameraEvents.cameraFailed("Couldn't read that video: \(error.localizedDescription)", runId: runId)
             return 0
         }
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
+
+        // Decode at the output size (960px wide once oriented). A square
+        // bound on the longest side keeps this right whichever way the
+        // track is rotated; the writer then lands the exact width.
+        if orientedSize.width > 0, orientedSize.height > 0 {
+            let scale = ThriftyFrameWriter.scale(forWidth: orientedSize.width)
+            let longest = (max(orientedSize.width, orientedSize.height) * scale).rounded(.up)
+            generator.maximumSize = CGSize(width: longest, height: longest)
+        }
 
         // Frames should show what was on screen at that moment, like a
         // canvas grab of the playing <video>.
@@ -297,29 +357,29 @@ enum ThriftyVideoFrameExtractor {
         generator.requestedTimeToleranceBefore = tolerance
         generator.requestedTimeToleranceAfter = tolerance
 
-        let startedAt = Date()
+        let clock = ThriftyPlaybackClock()
         var count = 0
         var nextSampleAt = firstFrameDelay
         var lastPosition = -1.0
 
         while !Task.isCancelled {
-            let wait = nextSampleAt - Date().timeIntervalSince(startedAt)
-            if wait > 0 {
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                } catch {
-                    break
-                }
+            // Sleep until the next sample, or until the video ends if that
+            // comes first, so the run ends exactly at the end of the video.
+            let target = min(nextSampleAt, duration)
+            do {
+                try await clock.sleep(until: target)
+            } catch {
+                break
             }
 
-            // The playhead is wherever real time says it is (1x playback).
-            let position = Date().timeIntervalSince(startedAt)
+            // The playhead is wherever playback time says it is (1x).
+            let position = clock.elapsed
             guard position < duration, !Task.isCancelled else {
                 break
             }
 
             nextSampleAt += interval
-            while nextSampleAt <= Date().timeIntervalSince(startedAt) {
+            while nextSampleAt <= clock.elapsed {
                 nextSampleAt += interval
             }
 
@@ -340,15 +400,99 @@ enum ThriftyVideoFrameExtractor {
 
                 ThriftyCameraEvents.frameCaptured(frame, source: "video", videoSeconds: (seconds * 100).rounded() / 100, runId: runId)
                 count += 1
+                frameEmitted(runId: runId)
             } catch {
                 print("[ThriftyCamera] Skipped video frame at \(position)s: \(error.localizedDescription)")
             }
         }
 
         if count == 0 && !Task.isCancelled {
-            ThriftyCameraEvents.cameraFailed("Couldn't read any frames from that video.")
+            ThriftyCameraEvents.cameraFailed("Couldn't read any frames from that video.", runId: runId)
         }
 
         return count
+    }
+}
+
+/// Playback time for a video run: wall-clock time since the start, minus
+/// any time the app spent in the background (iOS pauses a playing video
+/// when the app leaves the foreground, so sampling pauses too).
+final class ThriftyPlaybackClock {
+    private let lock = NSLock()
+    private let startedAt = Date()
+    private var pausedTotal: TimeInterval = 0
+    private var pausedSince: Date?
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+
+        observers.append(center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.pause()
+        })
+        observers.append(center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.resume()
+        })
+
+        // Started while already in the background (unlikely, but consistent).
+        DispatchQueue.main.async { [weak self] in
+            if UIApplication.shared.applicationState == .background {
+                self?.pause()
+            }
+        }
+    }
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    var elapsed: TimeInterval {
+        lock.withLock {
+            let now = Date()
+            let pausedNow = pausedSince.map { now.timeIntervalSince($0) } ?? 0
+
+            return now.timeIntervalSince(startedAt) - pausedTotal - pausedNow
+        }
+    }
+
+    var isPaused: Bool {
+        lock.withLock { pausedSince != nil }
+    }
+
+    /// Sleeps until playback time reaches `target`, waiting out any pause.
+    func sleep(until target: TimeInterval) async throws {
+        while true {
+            try Task.checkCancellation()
+
+            if isPaused {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                continue
+            }
+
+            let remaining = target - elapsed
+            guard remaining > 0 else {
+                return
+            }
+
+            // Re-check at least every 0.5s so a background pause is noticed.
+            try await Task.sleep(nanoseconds: UInt64(min(remaining, 0.5) * 1_000_000_000))
+        }
+    }
+
+    private func pause() {
+        lock.withLock {
+            if pausedSince == nil {
+                pausedSince = Date()
+            }
+        }
+    }
+
+    private func resume() {
+        lock.withLock {
+            if let since = pausedSince {
+                pausedTotal += Date().timeIntervalSince(since)
+                pausedSince = nil
+            }
+        }
     }
 }

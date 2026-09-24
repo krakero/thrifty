@@ -82,6 +82,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Appearance
+    |--------------------------------------------------------------------------
+    |
+    | Thrifty is dark-only, so system chrome (keyboards, alerts, sheets, the
+    | in-app browser) is pinned to dark via UIUserInterfaceStyle on iOS.
+    |
+    */
+
+    'appearance' => env('NATIVEPHP_APPEARANCE', 'dark'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Development Team (iOS)
     |--------------------------------------------------------------------------
     |

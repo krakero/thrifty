@@ -122,11 +122,7 @@ class AgentActivity extends NativeComponent
      */
     private function prettyJson(mixed $value): string
     {
-        $json = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
-
-        if ($json === false) {
-            return (string) print_r($value, true);
-        }
+        $json = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR) ?: 'null';
 
         return preg_replace_callback('/^(?: {4})+/m', fn (array $match): string => str_repeat(' ', strlen($match[0]) / 2), $json) ?? $json;
     }

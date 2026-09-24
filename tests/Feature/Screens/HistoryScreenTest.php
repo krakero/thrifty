@@ -1,0 +1,105 @@
+<?php
+
+use App\Models\AppStat;
+use App\Models\Item;
+use App\NativeComponents\History;
+use App\NativeComponents\Layouts\TabsLayout;
+use Native\Mobile\Testing\Native;
+
+it('shows the heading, stats and saved finds newest first', function () {
+    AppStat::current()->update(['frames_processed' => 1234, 'items_identified' => 5, 'searches_performed' => 7, 'model_calls' => 9]);
+    Item::factory()->create(['name' => 'Older lamp', 'last_seen_at' => now()->subDay()]);
+    Item::factory()->create(['name' => 'Newer radio', 'last_seen_at' => now()]);
+
+    $screen = Native::test(History::class, layout: TabsLayout::class)
+        ->assertSee('All-time finds')
+        ->assertSee('History')
+        ->assertSee('1,234')
+        ->assertSee('Searches')
+        ->assertSee('Older lamp')
+        ->assertSee('Newer radio');
+
+    expect($screen->get('itemIds'))->toHaveCount(2)
+        ->and(Item::find($screen->get('itemIds')[0])->name)->toBe('Newer radio');
+});
+
+it('shows the empty state', function () {
+    Native::test(History::class)
+        ->assertSee('No saved finds yet.');
+});
+
+it('searches across words and clears the search', function () {
+    Item::factory()->create(['name' => 'Sony Walkman', 'category' => 'Electronics']);
+    Item::factory()->create(['name' => 'Oak chair', 'category' => 'Furniture']);
+
+    Native::test(History::class)
+        ->set('search', 'walkman electronics')
+        ->assertSee('Sony Walkman')
+        ->assertDontSee('Oak chair')
+        ->set('search', 'nothing-like-this')
+        ->assertSee('No finds match your search.')
+        ->tap('clear-search')
+        ->assertSet('search', '')
+        ->assertSee('Oak chair');
+});
+
+it('shows an error banner for oversized searches', function () {
+    Native::test(History::class)
+        ->set('search', str_repeat('x', 501))
+        ->assertSee('Search must be 500 characters or fewer.')
+        ->tap('dismiss-error')
+        ->assertSet('error', null);
+});
+
+it('loads more finds a page at a time', function () {
+    Item::factory()->count(105)->create();
+
+    $screen = Native::test(History::class)->assertSee('Load more finds');
+    expect($screen->get('itemIds'))->toHaveCount(100);
+
+    $screen->tap('load-more')
+        ->assertDontSee('Load more finds')
+        ->assertSet('nextCursor', null);
+    expect($screen->get('itemIds'))->toHaveCount(105);
+});
+
+it('retries a failed page load', function () {
+    Item::factory()->count(101)->create();
+
+    $screen = Native::test(History::class)
+        ->set('nextCursor', 'not-json')
+        ->tap('load-more')
+        ->assertSee('Invalid history cursor.')
+        ->assertSet('failedLoadingMore', true);
+
+    $screen->set('nextCursor', null)
+        ->tap('retry-history')
+        ->assertSet('error', null);
+    expect($screen->get('itemIds'))->toHaveCount(100);
+});
+
+it('picks up new finds on refresh, pull-to-refresh and resume', function () {
+    $screen = Native::test(History::class)->assertSee('No saved finds yet.');
+
+    Item::factory()->create(['name' => 'Brass lamp']);
+    $screen->tap('refresh-history')->assertSee('Brass lamp');
+
+    Item::factory()->create(['name' => 'Record player']);
+    $screen->call('refresh')->assertSee('Record player');
+
+    Item::factory()->create(['name' => 'Vintage camera']);
+    $screen->instance()->onResume();
+    $screen->call('dismissError')->assertSee('Vintage camera');
+});
+
+it('opens settings and item details', function () {
+    $item = Item::factory()->create();
+
+    Native::test(History::class)
+        ->tap('open-settings')
+        ->assertNavigatedTo('/settings');
+
+    Native::test(History::class)
+        ->tap("item-card-{$item->id}")
+        ->assertNavigatedTo("/finds/{$item->id}?from=history");
+});

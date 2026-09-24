@@ -13,7 +13,7 @@
 
 <pressable
     ref="item-card-{{ $item->id }}"
-    @navigate="/finds/{{ $item->id }}?from={{ $from }}"
+    @navigate="'/finds/'.$item->id.'?from='.$from, ['from' => $from]"
     :press-scale="0.97"
     a11y-label="{{ $item->name }}, resale {{ Money::resaleRange($item) }}"
     a11y-hint="Opens the find details"
@@ -33,11 +33,15 @@
                 @if ($item->isRepeat())
                     <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 text-[11] text-theme-primary">Seen {{ $item->seen_count }}×</text>
                 @endif
-                <spacer />
-                <text class="text-xs text-theme-on-surface-variant">
-                    {{ $showCapturedAt ? $item->last_seen_at->format('M j, g:i A') : $item->first_seen_at->diffForHumans() }}
-                </text>
+                @unless ($showCapturedAt)
+                    <spacer />
+                    <text class="text-xs text-theme-on-surface-variant">{{ $item->first_seen_at->diffForHumans() }}</text>
+                @endunless
             </row>
+
+            @if ($showCapturedAt)
+                <text class="text-xs text-theme-on-surface-variant">Snapped {{ $item->last_seen_at->format('M j, Y, g:i A') }}</text>
+            @endif
 
             <text font="display" class="text-base text-theme-on-surface" :max-lines="2">{{ $item->name }}</text>
             <text class="text-sm text-theme-on-surface-variant" :max-lines="2">{{ $item->value_summary }}</text>

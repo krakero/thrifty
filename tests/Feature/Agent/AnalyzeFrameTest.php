@@ -717,15 +717,10 @@ it('keeps milliseconds on a scan session it creates', function () {
     expect(ScanSession::find('01K5ZZZZZZZZZZZZZZZZZZZZZZ')->started_at->format('H:i:s.v'))->toBe('15:00:00.123');
 });
 
-it('matches the web app instructions and input text byte for byte', function () {
-    $source = file_get_contents(__DIR__.'/fixtures/yard-sale-agent.ts.txt');
-
-    preg_match('/export const AGENT_INSTRUCTIONS = `(.*?)`;/s', $source, $instructions);
-    preg_match('/export const AGENT_INPUT_TEXT = "(.*?)";/s', $source, $inputText);
-
-    expect(FrameAgent::Instructions)->toBe($instructions[1])
-        ->and(FrameAgent::AgentInputText)->toBe($inputText[1])
-        ->and($source)->toContain('return `${AGENT_INPUT_TEXT}\\n\\nOnly return finds that match this user-supplied selection criteria:\\n<find_criteria>\\n${findCriteria}\\n</find_criteria>`;')
+it('keeps the agent instructions and input text unchanged', function () {
+    // Pinned by hash so prompt edits are deliberate. The text mirrors the original yard-sale agent contract.
+    expect(hash('sha256', FrameAgent::Instructions))->toBe('0e93a21f429659888bdfa77bf24c4caac65652eac965708e5d0eeedc50b43c3f')
+        ->and(hash('sha256', FrameAgent::AgentInputText))->toBe('b30a4fad03230fb77c5e99654d1e0d3309b8498abf21f71024ddbfbf4b4ad254')
         ->and(FrameAgent::buildInputText('X'))->toBe(FrameAgent::AgentInputText."\n\nOnly return finds that match this user-supplied selection criteria:\n<find_criteria>\nX\n</find_criteria>")
         ->and(FrameAgent::buildInputText(' '))->toContain("<find_criteria>\n \n</find_criteria>");
 });

@@ -106,8 +106,9 @@ TEXT;
      *
      * @throws AnalysisFailed
      */
-    public function run(string $apiKey, string $imageDataUrl, string $scanSessionId, string $findCriteria, ?array $ebayCredentials): array
+    public function run(#[\SensitiveParameter] string $apiKey, string $imageDataUrl, string $scanSessionId, string $findCriteria, ?array $ebayCredentials): array
     {
+        $deadline = Deadline::in(self::DeadlineSeconds);
         $input = [self::userMessage(self::buildInputText($findCriteria), $imageDataUrl)];
         $previousResponseId = null;
         $events = [];
@@ -117,7 +118,11 @@ TEXT;
         $repairRequested = false;
 
         for ($turn = 1; $turn <= self::MaxTurns; $turn++) {
-            $response = $this->createResponse($apiKey, $input, $previousResponseId, $ebayCredentials !== null);
+            if ($deadline->expired()) {
+                throw new AnalysisFailed(OpenAiResponses::TimedOutMessage);
+            }
+
+            $response = $this->createResponse($apiKey, $input, $previousResponseId, $ebayCredentials !== null, $deadline);
             $previousResponseId = $response['id'] ?? null;
             $output = is_array($response['output'] ?? null) ? $response['output'] : [];
 
@@ -155,11 +160,12 @@ TEXT;
                 $input = [];
 
                 foreach ($functionCalls as $call) {
+                    $result = $this->executeTool($call, $scanSessionId, $ebayCredentials, $deadline);
+
                     if (($call['name'] ?? null) === EbayListings::ToolName) {
                         $searchesPerformed++;
                     }
 
-                    $result = $this->executeTool($call, $scanSessionId, $ebayCredentials);
                     $events[] = [
                         'sequence' => count($events),
                         'type' => 'tool_call_output_item',
@@ -231,7 +237,7 @@ TEXT;
      * @param  list<array<string, mixed>>  $input
      * @return array<string, mixed>
      */
-    private function createResponse(string $apiKey, array $input, ?string $previousResponseId, bool $withEbay): array
+    private function createResponse(#[\SensitiveParameter] string $apiKey, array $input, ?string $previousResponseId, bool $withEbay, Deadline $deadline): array
     {
         $payload = [
             'model' => self::Model,
@@ -250,29 +256,34 @@ TEXT;
             $payload['previous_response_id'] = $previousResponseId;
         }
 
-        return $this->responses->create($apiKey, $payload);
+        return $this->responses->create($apiKey, $payload, $deadline);
     }
 
     /**
      * @param  array<string, mixed>  $call
      * @param  array{clientId: string, clientSecret: string}|null  $ebayCredentials
      */
-    private function executeTool(array $call, string $scanSessionId, ?array $ebayCredentials): mixed
+    private function executeTool(array $call, string $scanSessionId, ?array $ebayCredentials, Deadline $deadline): mixed
     {
         $name = (string) ($call['name'] ?? '');
+        $available = $name === PreviousScans::ToolName || ($name === EbayListings::ToolName && $ebayCredentials !== null);
+
+        if (! $available) {
+            // The Agents SDK fails the run (ModelBehaviorError) when the model calls a tool the agent doesn't have.
+            throw new AnalysisFailed("Luna called a tool that isn't available ({$name}).");
+        }
 
         try {
             $arguments = json_decode((string) ($call['arguments'] ?? '{}'), true, 64, JSON_THROW_ON_ERROR);
 
-            return match (true) {
-                $name === PreviousScans::ToolName => $this->previousScans->check($scanSessionId, self::candidates($arguments)),
-                $name === EbayListings::ToolName && $ebayCredentials !== null => $this->ebay->search(
+            return $name === PreviousScans::ToolName
+                ? $this->previousScans->check($scanSessionId, self::candidates($arguments))
+                : $this->ebay->search(
                     $ebayCredentials,
                     self::ebayQuery($arguments),
                     max(1, min(20, (int) ($arguments['limit'] ?? 8))),
-                ),
-                default => throw new InvalidArgumentException("Tool {$name} not found."),
-            };
+                    $deadline->cap(EbayListings::RequestTimeoutSeconds),
+                );
         } catch (Throwable $exception) {
             return 'An error occurred while running the tool. Please try again. Error: '.$exception->getMessage();
         }

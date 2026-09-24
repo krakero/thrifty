@@ -16,6 +16,7 @@ use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ScanSession;
 use App\Services\AppSettings;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -25,10 +26,14 @@ use Native\Mobile\AsyncTask;
 beforeEach(function () {
     Storage::fake('local');
     app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test-key');
+    EbayListings::forgetToken();
     $this->session = ScanSession::factory()->create();
 });
 
-afterEach(fn () => AsyncTask::clearFake());
+afterEach(function () {
+    AsyncTask::clearFake();
+    Item::flushEventListeners();
+});
 
 /**
  * Write a real 400x300 JPEG frame to the fake local disk.
@@ -159,7 +164,8 @@ it('requires an OpenAI API key before analyzing', function () {
         ->toThrow(MissingApiKey::class, 'Add your OpenAI API key in Settings to start scanning.');
 
     expect(new MissingApiKey)->toBeInstanceOf(AnalysisFailed::class);
-    expect(FrameRun::count())->toBe(0);
+    expect(FrameRun::count())->toBe(0)->and(AppStat::current()->frames_processed)->toBe(0);
+    Storage::disk('local')->assertMissing('frames/frame-1.jpg');
     Http::assertNothingSent();
 });
 
@@ -189,11 +195,13 @@ it('runs the tool loop, persists finds and records a sanitized audit', function 
             ->push(agentFinalResponse([agentCandidate()])),
     ]);
 
-    $result = analyze($this->session->id, findCriteria: 'Vintage electronics');
+    $frameRunId = (string) Str::ulid();
+    $result = analyze($this->session->id, frameRunId: $frameRunId, findCriteria: 'Vintage electronics');
 
     $item = Item::sole();
     $run = FrameRun::sole();
 
+    expect($run->id)->toBe($frameRunId);
     expect($result)
         ->frameRunId->toBe($run->id)
         ->itemIds->toBe([$item->id])
@@ -208,13 +216,13 @@ it('runs the tool loop, persists finds and records a sanitized audit', function 
         ->frame_run_id->toBe($run->id)
         ->seen_count->toBe(1)
         ->retail_price_cents->toBe(12900)
-        ->thumbnail_path->toBe("thumbs/{$item->id}.jpg")
+        ->thumbnail_path->toBe("thumbs/{$frameRunId}-0.jpg")
         ->and($item->boundingBox())->toBe(['xMin' => 100, 'yMin' => 200, 'xMax' => 500, 'yMax' => 700])
         ->and($item->first_seen_at->toIso8601ZuluString())->toBe('2026-09-23T15:00:00Z');
     expect($item->valuationSources()->pluck('source_type')->all())->toEqualCanonicalizing([ValuationSourceType::Active, ValuationSourceType::Retail]);
 
-    Storage::disk('local')->assertExists(["thumbs/{$item->id}.jpg", 'frames/frame-1.jpg']);
-    [$width, $height] = getimagesizefromstring(Storage::disk('local')->get("thumbs/{$item->id}.jpg"));
+    Storage::disk('local')->assertExists(["thumbs/{$frameRunId}-0.jpg", 'frames/frame-1.jpg']);
+    [$width, $height] = getimagesizefromstring(Storage::disk('local')->get("thumbs/{$frameRunId}-0.jpg"));
     expect([$width, $height])->toBe([218, 204]);
 
     expect($run)
@@ -454,16 +462,28 @@ it('fails when the agent exceeds its turn budget', function () {
     expect(openAiRequests())->toHaveCount(FrameAgent::MaxTurns);
 });
 
-it('reports tool errors back to the model instead of failing', function () {
+it('reports tool execution errors back to the model', function () {
     agentFrame();
     fakeOpenAi([
-        agentResponse('resp_1', [agentFunctionCall('search_ebay_active_listings', ['query' => 'walkman', 'limit' => 8], 'call_1')]),
+        agentResponse('resp_1', [agentFunctionCall('check_previous_scans', ['candidates' => []], 'call_1')]),
         agentFinalResponse([]),
     ]);
 
     analyze($this->session->id);
 
-    expect(openAiRequests()[1]['input'][0]['output'])->toContain('Tool search_ebay_active_listings not found.');
+    expect(openAiRequests()[1]['input'][0]['output'])
+        ->toBe('An error occurred while running the tool. Please try again. Error: candidates must be a list of 1 to 20 items.');
+});
+
+it('fails the run like the SDK when the model calls a tool the agent does not have', function () {
+    agentFrame();
+    fakeOpenAi([agentResponse('resp_1', [agentFunctionCall('search_ebay_active_listings', ['query' => 'walkman', 'limit' => 8], 'call_1')])]);
+
+    expect(fn () => analyze($this->session->id))
+        ->toThrow(AnalysisFailed::class, "Luna called a tool that isn't available (search_ebay_active_listings).");
+
+    expect(FrameRun::sole())->status->toBe(FrameRunStatus::Failed)
+        ->and(AppStat::current())->frames_processed->toBe(1)->searches_performed->toBe(0);
 });
 
 it('sends the request the Agents SDK sent, chaining later turns on the previous response', function () {
@@ -521,4 +541,114 @@ it('hands the user-facing message to the failed callback', function () {
 
     expect($error->getMessage())->toBe('Add your OpenAI API key in Settings to start scanning.')
         ->and($error->originalClass())->toBe(MissingApiKey::class);
+});
+
+it('records a failed run with the scan-provided id when the frame cannot be read', function () {
+    Http::fake();
+    $frameRunId = (string) Str::ulid();
+
+    expect(fn () => analyze($this->session->id, 'frames/missing.jpg', frameRunId: $frameRunId))
+        ->toThrow(AnalysisFailed::class, 'The captured frame could not be read.');
+
+    expect(FrameRun::sole())->id->toBe($frameRunId)->status->toBe(FrameRunStatus::Failed)
+        ->and(AppStat::current()->frames_processed)->toBe(1);
+    Http::assertNothingSent();
+});
+
+it('takes the failure path when saving fails, without leaking SQL or files', function () {
+    agentFrame();
+    fakeOpenAi([agentFinalResponse([agentCandidate(), agentCandidate(['fingerprint' => 'pink oval wall mirror'])])]);
+    Item::saving(fn () => throw new RuntimeException('SQLSTATE[23000]: insert into "items" ("id") values (?)'));
+    $frameRunId = (string) Str::ulid();
+
+    expect(fn () => analyze($this->session->id, frameRunId: $frameRunId))
+        ->toThrow(AnalysisFailed::class, "Couldn't save this frame's finds. Try again.");
+
+    expect(FrameRun::sole())->id->toBe($frameRunId)->status->toBe(FrameRunStatus::Failed)
+        ->error->not->toContain('SQL')
+        ->and(Item::count())->toBe(0)
+        ->and(AppStat::current())->frames_processed->toBe(1)->items_identified->toBe(0);
+    expect(Storage::disk('local')->allFiles())->toBe([]);
+});
+
+it('retries a locked write without leaving duplicate thumbnails behind', function () {
+    agentFrame();
+    fakeOpenAi([agentFinalResponse([agentCandidate()])]);
+    $attempts = 0;
+    Item::saving(function () use (&$attempts) {
+        if (++$attempts === 1) {
+            throw new QueryException('sqlite', 'insert into items', [], new PDOException('SQLSTATE[HY000]: General error: 5 database is locked'));
+        }
+    });
+    $frameRunId = (string) Str::ulid();
+
+    $result = analyze($this->session->id, frameRunId: $frameRunId);
+
+    expect($attempts)->toBe(2)
+        ->and(Item::sole()->thumbnail_path)->toBe("thumbs/{$frameRunId}-0.jpg")
+        ->and($result['newItemIds'])->toBe([Item::sole()->id]);
+    expect(Storage::disk('local')->allFiles('thumbs'))->toBe(["thumbs/{$frameRunId}-0.jpg"]);
+});
+
+it('releases the previous frame and thumbnail when a repeat moves to a newer frame', function () {
+    agentFrame('frames/a.jpg');
+    agentFrame('frames/b.jpg');
+    fakeOpenAi([agentFinalResponse([agentCandidate()]), agentFinalResponse([agentCandidate()])]);
+
+    $first = analyze($this->session->id, 'frames/a.jpg');
+    $firstThumbnail = Item::sole()->thumbnail_path;
+    $second = analyze($this->session->id, 'frames/b.jpg', '2026-09-23T15:00:05Z');
+
+    expect(FrameRun::find($first['frameRunId'])->frame_path)->toBeNull()
+        ->and(FrameRun::find($second['frameRunId'])->frame_path)->toBe('frames/b.jpg')
+        ->and(Item::sole()->thumbnail_path)->toBe("thumbs/{$second['frameRunId']}-0.jpg");
+    Storage::disk('local')->assertMissing(['frames/a.jpg', $firstThumbnail]);
+    Storage::disk('local')->assertExists(['frames/b.jpg', "thumbs/{$second['frameRunId']}-0.jpg"]);
+});
+
+it('keeps a frame while another find from it still points at that run', function () {
+    agentFrame('frames/a.jpg');
+    agentFrame('frames/b.jpg');
+    fakeOpenAi([
+        agentFinalResponse([agentCandidate(), agentCandidate(['fingerprint' => 'pink oval wall mirror'])]),
+        agentFinalResponse([agentCandidate()]),
+    ]);
+
+    $first = analyze($this->session->id, 'frames/a.jpg');
+    analyze($this->session->id, 'frames/b.jpg', '2026-09-23T15:00:05Z');
+
+    expect(FrameRun::find($first['frameRunId'])->frame_path)->toBe('frames/a.jpg');
+    Storage::disk('local')->assertExists('frames/a.jpg');
+});
+
+it('stops the agent once the frame budget is spent', function () {
+    agentFrame();
+    $loop = agentResponse('resp_loop', [agentFunctionCall('check_previous_scans', ['candidates' => [agentCandidate()]], 'call_1')]);
+    Http::fake([OpenAiResponses::Url => function () use ($loop) {
+        $this->travel(100)->seconds();
+
+        return Http::response($loop);
+    }]);
+
+    expect(fn () => analyze($this->session->id))->toThrow(AnalysisFailed::class, 'Luna took too long to analyze this frame.');
+
+    expect(openAiRequests())->toHaveCount(2)
+        ->and(FrameRun::sole())->status->toBe(FrameRunStatus::Failed)->error->toBe('Luna took too long to analyze this frame.');
+});
+
+it('keeps the async watchdog above four frames queued on one slot', function () {
+    expect(AnalyzeFrame::TimeoutSeconds)->toBeGreaterThanOrEqual(4 * FrameAgent::DeadlineSeconds);
+});
+
+it('matches the web app instructions and input text byte for byte', function () {
+    $source = file_get_contents(__DIR__.'/fixtures/yard-sale-agent.ts.txt');
+
+    preg_match('/export const AGENT_INSTRUCTIONS = `(.*?)`;/s', $source, $instructions);
+    preg_match('/export const AGENT_INPUT_TEXT = "(.*?)";/s', $source, $inputText);
+
+    expect(FrameAgent::Instructions)->toBe($instructions[1])
+        ->and(FrameAgent::AgentInputText)->toBe($inputText[1])
+        ->and($source)->toContain('return `${AGENT_INPUT_TEXT}\\n\\nOnly return finds that match this user-supplied selection criteria:\\n<find_criteria>\\n${findCriteria}\\n</find_criteria>`;')
+        ->and(FrameAgent::buildInputText('X'))->toBe(FrameAgent::AgentInputText."\n\nOnly return finds that match this user-supplied selection criteria:\n<find_criteria>\nX\n</find_criteria>")
+        ->and(FrameAgent::buildInputText(' '))->toContain("<find_criteria>\n \n</find_criteria>");
 });

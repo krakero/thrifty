@@ -2,11 +2,16 @@
 
 use App\Agent\EbayListings;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
 $credentials = ['clientId' => 'ebay-id', 'clientSecret' => 'ebay-secret'];
 
-it('caches the application token until shortly before it expires', function () use ($credentials) {
+beforeEach(fn () => EbayListings::forgetToken());
+
+it('keeps the application token in memory, never in the cache', function () use ($credentials) {
+    Cache::spy();
     Http::fake([
         EbayListings::TokenUrl => Http::response(['access_token' => 'token-1', 'expires_in' => 7200]),
         EbayListings::SearchUrl.'*' => Http::response(['itemSummaries' => []]),
@@ -26,10 +31,35 @@ it('caches the application token until shortly before it expires', function () u
         && $request->hasHeader('Authorization', 'Bearer token-1')
         && $request->hasHeader('X-EBAY-C-MARKETPLACE-ID', 'EBAY_US'));
 
-    $this->travel(7141)->seconds();
+    Cache::shouldNotHaveReceived('put');
+    Cache::shouldNotHaveReceived('get');
+    expect(DB::table('cache')->count())->toBe(0);
+});
+
+it('fetches a new token once the old one is within a minute of expiring', function () use ($credentials) {
+    Http::fake([
+        EbayListings::TokenUrl => Http::response(['access_token' => 'short-lived', 'expires_in' => 60]),
+        EbayListings::SearchUrl.'*' => Http::response(['itemSummaries' => []]),
+    ]);
+
+    $ebay = app(EbayListings::class);
+    $ebay->search($credentials, 'walkman');
     $ebay->search($credentials, 'walkman');
 
-    Http::assertSentCount(5);
+    Http::assertSentCount(4);
+});
+
+it('fetches a new token when the credentials change', function () use ($credentials) {
+    Http::fake([
+        EbayListings::TokenUrl => Http::response(['access_token' => 'token', 'expires_in' => 7200]),
+        EbayListings::SearchUrl.'*' => Http::response(['itemSummaries' => []]),
+    ]);
+
+    $ebay = app(EbayListings::class);
+    $ebay->search($credentials, 'walkman');
+    $ebay->search(['clientId' => 'other', 'clientSecret' => 'secret'], 'walkman');
+
+    Http::assertSentCount(4);
 });
 
 it('maps listings to cents with shipping and defaults', function () use ($credentials) {

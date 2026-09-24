@@ -15,18 +15,47 @@ class Thumbnailer
     }
 
     /**
+     * Crop several boxes out of one frame, decoding it once.
+     *
+     * @param  list<array{xMin: int, yMin: int, xMax: int, yMax: int}>  $boxes  Normalized 0-1000 coordinates.
+     * @return list<?string> JPEG bytes per box, or null where a crop can't be made.
+     */
+    public function cropAll(string $frameBytes, array $boxes): array
+    {
+        $frame = self::isAvailable() && $boxes !== [] ? self::decode($frameBytes) : false;
+
+        return array_map(fn (array $box): ?string => $frame === false ? null : self::cropImage($frame, $box), $boxes);
+    }
+
+    /**
      * @param  array{xMin: int, yMin: int, xMax: int, yMax: int}  $box  Normalized 0-1000 coordinates.
      * @return string|null JPEG bytes, or null when the crop can't be made.
      */
     public function crop(string $frameBytes, array $box): ?string
     {
-        if (! self::isAvailable() || $box['xMax'] <= $box['xMin'] || $box['yMax'] <= $box['yMin']) {
-            return null;
+        return $this->cropAll($frameBytes, [$box])[0];
+    }
+
+    /**
+     * Decode an image, treating unreadable data as "no crop" rather than a PHP warning.
+     */
+    private static function decode(string $bytes): \GdImage|false
+    {
+        set_error_handler(fn (): bool => true);
+
+        try {
+            return getimagesizefromstring($bytes) !== false ? imagecreatefromstring($bytes) : false;
+        } finally {
+            restore_error_handler();
         }
+    }
 
-        $frame = getimagesizefromstring($frameBytes) !== false ? imagecreatefromstring($frameBytes) : false;
-
-        if ($frame === false) {
+    /**
+     * @param  array{xMin: int, yMin: int, xMax: int, yMax: int}  $box
+     */
+    private static function cropImage(\GdImage $frame, array $box): ?string
+    {
+        if ($box['xMax'] <= $box['xMin'] || $box['yMax'] <= $box['yMin']) {
             return null;
         }
 

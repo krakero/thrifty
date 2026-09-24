@@ -62,22 +62,23 @@ class FrameAnalyzer
             throw new MissingApiKey;
         }
 
-        $frameBytes = $disk->exists($framePath) ? $disk->get($framePath) : null;
-
-        if (! $frameBytes) {
-            throw new AnalysisFailed('The captured frame could not be read.');
-        }
-
         $findCriteria = mb_substr($findCriteria, 0, 1000);
         $capturedAt = self::parseCapturedAt($capturedAt);
-
-        $this->withWriteRetry(fn () => ScanSession::query()->insertOrIgnore([
-            'id' => $scanSessionId,
-            'source_type' => ScanSource::Camera->value,
-            'started_at' => $capturedAt,
-        ]));
+        $thumbnailPaths = [];
 
         try {
+            $frameBytes = $disk->exists($framePath) ? $disk->get($framePath) : null;
+
+            if (! $frameBytes) {
+                throw new AnalysisFailed('The captured frame could not be read.');
+            }
+
+            $this->withWriteRetry(fn () => ScanSession::query()->insertOrIgnore([
+                'id' => $scanSessionId,
+                'source_type' => ScanSource::Camera->value,
+                'started_at' => $capturedAt,
+            ]));
+
             $result = $this->agent->run(
                 $apiKey,
                 'data:'.self::mimeType($framePath).';base64,'.base64_encode($frameBytes),
@@ -85,26 +86,24 @@ class FrameAnalyzer
                 $findCriteria,
                 $this->settings->ebayCredentials(),
             );
+
+            $thumbnailPaths = $this->writeThumbnails($frameBytes, $result['analysis']['items'], $frameRunId, $disk);
+            $proposedItemIds = array_map(fn (): string => (string) Str::ulid(), $result['analysis']['items']);
+
+            $saved = $this->withWriteRetry(
+                fn (): array => $this->persist($result, $thumbnailPaths, $proposedItemIds, $frameRunId, $scanSessionId, $framePath, $capturedAt, $started),
+            );
         } catch (Throwable $exception) {
-            $this->recordFailure($exception, $frameRunId, $scanSessionId, $framePath, $capturedAt, $findCriteria, $started, $disk);
+            $failure = self::userFacingFailure($exception);
+            $disk->delete([$framePath, ...array_filter($thumbnailPaths)]);
+            $this->recordFailure($failure, $frameRunId, $scanSessionId, $capturedAt, $findCriteria, $started);
 
-            throw $exception instanceof AnalysisFailed ? $exception : new AnalysisFailed($exception->getMessage() ?: 'Frame analysis failed', 0, $exception);
+            throw $failure;
         }
 
-        $thumbnails = array_map(
-            fn (array $candidate): ?string => $this->thumbnailer->crop($frameBytes, $candidate['boundingBox']),
-            $result['analysis']['items'],
-        );
+        [$itemIds, $newItemIds, $stats, $replacedThumbnails, $previousFrameRunIds] = $saved;
 
-        [$itemIds, $newItemIds] = $this->withWriteRetry(
-            fn (): array => $this->persist($result, $thumbnails, $frameRunId, $scanSessionId, $framePath, $capturedAt, $started, $disk),
-        );
-
-        if ($itemIds === []) {
-            $disk->delete($framePath);
-        }
-
-        $stats = AppStat::current();
+        $this->releaseUnreferencedFiles($itemIds === [] ? [$framePath] : [], $replacedThumbnails, $previousFrameRunIds, $disk);
 
         return [
             'frameRunId' => $frameRunId,
@@ -127,18 +126,24 @@ class FrameAnalyzer
     /**
      * Save the finds, their comparables, the frame run and the stats in one short transaction.
      *
+     * Safe to retry: ids and thumbnail files are prepared by the caller, so a rolled-back attempt leaves nothing behind.
+     *
      * @param  array{analysis: array{items: list<array<string, mixed>>}, modelCalls: int, searchesPerformed: int, audit: array<string, mixed>}  $result
-     * @param  list<?string>  $thumbnails  Cropped JPEG bytes per candidate.
-     * @return array{0: list<string>, 1: list<string>} All saved item ids (one per saved candidate) and the ids of new finds.
+     * @param  list<?string>  $thumbnailPaths  Written crop per candidate, or null to fall back to the full frame.
+     * @param  list<string>  $proposedItemIds  Id per candidate if it turns out to be a new find.
+     * @return array{0: list<string>, 1: list<string>, 2: AppStat, 3: list<string>, 4: list<string>} Saved item ids (one per saved candidate),
+     *                                                                                               new find ids, the updated totals, thumbnails replaced on repeats, and frame runs repeats moved away from.
      */
-    private function persist(array $result, array $thumbnails, string $frameRunId, string $scanSessionId, string $framePath, CarbonImmutable $capturedAt, int $started, Filesystem $disk): array
+    private function persist(array $result, array $thumbnailPaths, array $proposedItemIds, string $frameRunId, string $scanSessionId, string $framePath, CarbonImmutable $capturedAt, int $started): array
     {
-        return DB::transaction(function () use ($result, $thumbnails, $frameRunId, $scanSessionId, $framePath, $capturedAt, $started, $disk): array {
+        return DB::transaction(function () use ($result, $thumbnailPaths, $proposedItemIds, $frameRunId, $scanSessionId, $framePath, $capturedAt, $started): array {
             $knownFingerprints = Item::query()->select(['id', 'fingerprint'])->latestSeen()->limit(250)->get()
                 ->map(fn (Item $item): array => ['id' => $item->id, 'fingerprint' => $item->fingerprint])
                 ->all();
             $itemIds = [];
             $newItemIds = [];
+            $replacedThumbnails = [];
+            $previousFrameRunIds = [];
 
             foreach ($result['analysis']['items'] as $index => $candidate) {
                 $proposedFingerprint = Normalize::normalizeFingerprint($candidate['fingerprint'] ?: $candidate['name']);
@@ -150,13 +155,12 @@ class FrameAnalyzer
                 $fingerprint = self::matchKnownFingerprint($candidate, $proposedFingerprint, $knownFingerprints) ?? $proposedFingerprint;
                 $item = Item::query()->where('fingerprint', $fingerprint)->first();
                 $duplicate = $item !== null;
-                $item ??= (new Item)->forceFill(['id' => (string) Str::ulid(), 'first_seen_at' => $capturedAt, 'seen_count' => 0]);
+                $item ??= (new Item)->forceFill(['id' => $proposedItemIds[$index], 'first_seen_at' => $capturedAt, 'seen_count' => 0]);
+                $thumbnailPath = $thumbnailPaths[$index] ?? $framePath;
 
-                $thumbnailPath = $framePath;
-
-                if ($thumbnails[$index] !== null) {
-                    $thumbnailPath = "thumbs/{$item->id}.jpg";
-                    $disk->put($thumbnailPath, $thumbnails[$index]);
+                if ($duplicate) {
+                    $replacedThumbnails[] = $item->thumbnail_path;
+                    $previousFrameRunIds[] = $item->frame_run_id;
                 }
 
                 $item->forceFill([
@@ -231,7 +235,7 @@ class FrameAnalyzer
 
             AppStat::record(1, count($itemIds), $result['searchesPerformed'], $result['modelCalls']);
 
-            return [$itemIds, $newItemIds];
+            return [$itemIds, $newItemIds, AppStat::current(), array_values(array_diff($replacedThumbnails, [$framePath], $thumbnailPaths)), array_values(array_filter(array_diff($previousFrameRunIds, [$frameRunId])))];
         });
     }
 
@@ -266,12 +270,19 @@ class FrameAnalyzer
         return $bestFingerprint;
     }
 
-    private function recordFailure(Throwable $exception, string $frameRunId, string $scanSessionId, string $framePath, CarbonImmutable $capturedAt, string $findCriteria, int $started, Filesystem $disk): void
+    /**
+     * Mirror the Worker's failure path: a failed frame run (with the audit input) and one more processed frame.
+     */
+    private function recordFailure(AnalysisFailed $failure, string $frameRunId, string $scanSessionId, CarbonImmutable $capturedAt, string $findCriteria, int $started): void
     {
-        $disk->delete($framePath);
-
         try {
-            $this->withWriteRetry(fn () => DB::transaction(function () use ($exception, $frameRunId, $scanSessionId, $capturedAt, $findCriteria, $started): void {
+            $this->withWriteRetry(fn () => DB::transaction(function () use ($failure, $frameRunId, $scanSessionId, $capturedAt, $findCriteria, $started): void {
+                ScanSession::query()->insertOrIgnore([
+                    'id' => $scanSessionId,
+                    'source_type' => ScanSource::Camera->value,
+                    'started_at' => $capturedAt,
+                ]);
+
                 FrameRun::query()->forceCreate([
                     'id' => $frameRunId,
                     'scan_session_id' => $scanSessionId,
@@ -290,13 +301,88 @@ class FrameAnalyzer
                     'output_json' => null,
                     'usage_json' => null,
                     'status' => FrameRunStatus::Failed,
-                    'error' => mb_substr($exception->getMessage() ?: 'Frame analysis failed', 0, 1000),
+                    'error' => mb_substr($failure->getMessage(), 0, 1000),
                 ]);
 
                 AppStat::record(1, 0, 0, 0);
             }));
         } catch (Throwable $recordingFailure) {
             report($recordingFailure);
+        }
+    }
+
+    /**
+     * An {@see AnalysisFailed} whose message is safe to show: database and filesystem errors never leak SQL or paths.
+     */
+    private static function userFacingFailure(Throwable $exception): AnalysisFailed
+    {
+        if ($exception instanceof AnalysisFailed) {
+            return $exception;
+        }
+
+        report($exception);
+
+        return new AnalysisFailed("Couldn't save this frame's finds. Try again.", 0, $exception);
+    }
+
+    /**
+     * Crop every find once, before the write transaction, into files named after this frame run.
+     *
+     * @param  list<array<string, mixed>>  $candidates
+     * @return list<?string> Disk path per candidate, or null when no crop could be made.
+     */
+    private function writeThumbnails(string $frameBytes, array $candidates, string $frameRunId, Filesystem $disk): array
+    {
+        $crops = $this->thumbnailer->cropAll($frameBytes, array_column($candidates, 'boundingBox'));
+        $paths = [];
+
+        foreach ($crops as $index => $bytes) {
+            $path = $bytes === null ? null : "thumbs/{$frameRunId}-{$index}.jpg";
+
+            if ($path !== null) {
+                $disk->put($path, $bytes);
+            }
+
+            $paths[] = $path;
+        }
+
+        return $paths;
+    }
+
+    /**
+     * After a successful save, delete files nothing references any more: the frame when nothing was found, thumbnails
+     * replaced by a repeat, and the frames of earlier runs whose finds have all moved to this one.
+     *
+     * @param  list<string>  $frames
+     * @param  list<string>  $thumbnails
+     * @param  list<string>  $frameRunIds
+     */
+    private function releaseUnreferencedFiles(array $frames, array $thumbnails, array $frameRunIds, Filesystem $disk): void
+    {
+        try {
+            $orphanedRuns = FrameRun::query()
+                ->whereIn('id', array_unique($frameRunIds))
+                ->whereNotNull('frame_path')
+                ->whereNotExists(fn ($query) => $query->select(DB::raw(1))->from('items')->whereColumn('items.frame_run_id', 'frame_runs.id'))
+                ->get(['id', 'frame_path']);
+
+            if ($orphanedRuns->isNotEmpty()) {
+                $this->withWriteRetry(fn () => FrameRun::query()->whereIn('id', $orphanedRuns->pluck('id'))->update(['frame_path' => null]));
+            }
+
+            $candidates = array_values(array_unique([...$frames, ...$thumbnails, ...$orphanedRuns->pluck('frame_path')->all()]));
+
+            if ($candidates === []) {
+                return;
+            }
+
+            $referenced = Item::query()->whereIn('thumbnail_path', $candidates)->pluck('thumbnail_path')
+                ->merge(FrameRun::query()->whereIn('frame_path', $candidates)->pluck('frame_path'))
+                ->all();
+
+            $disk->delete(array_values(array_diff($candidates, $referenced)));
+        } catch (Throwable $exception) {
+            report($exception);
         }
     }
 

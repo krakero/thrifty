@@ -48,7 +48,7 @@ class AppSettings
         return Setting::query()->find($key)?->value ?? $default;
     }
 
-    public function set(string $key, ?string $value): void
+    public function set(string $key, #[\SensitiveParameter] ?string $value): void
     {
         if ($value === null || $value === '') {
             Setting::query()->whereKey($key)->delete();

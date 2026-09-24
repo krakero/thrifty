@@ -3,7 +3,6 @@
 namespace App\Agent;
 
 use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 use Throwable;
@@ -18,6 +17,15 @@ class EbayListings
     public const SearchUrl = 'https://api.ebay.com/buy/browse/v1/item_summary/search';
 
     public const ToolName = 'search_ebay_active_listings';
+
+    public const RequestTimeoutSeconds = 30;
+
+    /**
+     * The application token, kept in memory for this PHP context only (like the Worker's module variable), never on disk.
+     *
+     * @var array{credentials: string, token: string, expiresAt: float}|null
+     */
+    private static ?array $appToken = null;
 
     /**
      * The function tool definition sent to the Responses API.
@@ -59,14 +67,14 @@ class EbayListings
      * @param  array{clientId: string, clientSecret: string}  $credentials
      * @return array{listings: list<array{title: string, priceCents: ?int, shippingCents: ?int, currency: string, condition: ?string, url: ?string}>, total: int, error?: string}
      */
-    public function search(array $credentials, string $query, int $limit = 8): array
+    public function search(#[\SensitiveParameter] array $credentials, string $query, int $limit = 8, float $timeoutSeconds = self::RequestTimeoutSeconds): array
     {
         try {
-            $response = Http::withToken($this->accessToken($credentials))
+            $response = Http::withToken($this->accessToken($credentials, $timeoutSeconds))
                 ->withHeaders(['X-EBAY-C-MARKETPLACE-ID' => 'EBAY_US'])
                 ->acceptJson()
-                ->connectTimeout(10)
-                ->timeout(30)
+                ->connectTimeout(min(10, $timeoutSeconds))
+                ->timeout($timeoutSeconds)
                 ->get(self::SearchUrl, ['q' => $query, 'limit' => $limit]);
 
             if ($response->failed()) {
@@ -96,23 +104,23 @@ class EbayListings
     }
 
     /**
-     * An application access token, cached until a minute before it expires.
+     * An application access token, reused until a minute before it expires.
      *
      * @param  array{clientId: string, clientSecret: string}  $credentials
      */
-    public function accessToken(array $credentials): string
+    public function accessToken(#[\SensitiveParameter] array $credentials, float $timeoutSeconds = self::RequestTimeoutSeconds): string
     {
-        $cacheKey = 'ebay.app-token.'.sha1($credentials['clientId'].':'.$credentials['clientSecret']);
+        $credentialsHash = hash('sha256', $credentials['clientId'].':'.$credentials['clientSecret']);
 
-        if ($token = Cache::get($cacheKey)) {
-            return $token;
+        if (self::$appToken !== null && self::$appToken['credentials'] === $credentialsHash && microtime(true) < self::$appToken['expiresAt']) {
+            return self::$appToken['token'];
         }
 
         $response = Http::withBasicAuth($credentials['clientId'], $credentials['clientSecret'])
             ->asForm()
             ->acceptJson()
-            ->connectTimeout(10)
-            ->timeout(30)
+            ->connectTimeout(min(10, $timeoutSeconds))
+            ->timeout($timeoutSeconds)
             ->post(self::TokenUrl, [
                 'grant_type' => 'client_credentials',
                 'scope' => 'https://api.ebay.com/oauth/api_scope',
@@ -123,13 +131,22 @@ class EbayListings
         }
 
         $token = $response->json('access_token');
-        $ttl = (int) $response->json('expires_in', 7200) - 60;
 
-        if ($ttl > 0) {
-            Cache::put($cacheKey, $token, $ttl);
-        }
+        self::$appToken = [
+            'credentials' => $credentialsHash,
+            'token' => $token,
+            'expiresAt' => microtime(true) + ((int) $response->json('expires_in', 7200) - 60),
+        ];
 
         return $token;
+    }
+
+    /**
+     * Forget the in-memory token (tests, or after credentials change).
+     */
+    public static function forgetToken(): void
+    {
+        self::$appToken = null;
     }
 
     private static function parseCents(mixed $value): ?int

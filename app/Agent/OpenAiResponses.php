@@ -4,7 +4,6 @@ namespace App\Agent;
 
 use App\Agent\Exceptions\AnalysisFailed;
 use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
@@ -15,34 +14,56 @@ class OpenAiResponses
 {
     public const Url = 'https://api.openai.com/v1/responses';
 
+    /** Longest a single request may take when the frame's budget allows it. */
+    public const RequestTimeoutSeconds = 120;
+
+    /** Retries after the first attempt, like the official SDK. */
+    public const MaxRetries = 2;
+
+    public const TimedOutMessage = 'Luna took too long to analyze this frame.';
+
     /**
-     * Create one model response, retrying transient failures like the official SDK (two retries).
+     * Create one model response, retrying transient failures while the frame's budget allows.
      *
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      *
      * @throws AnalysisFailed
      */
-    public function create(string $apiKey, array $payload): array
+    public function create(#[\SensitiveParameter] string $apiKey, array $payload, Deadline $deadline): array
     {
-        try {
-            $response = Http::withToken($apiKey)
-                ->acceptJson()
-                ->asJson()
-                ->connectTimeout(15)
-                ->timeout(180)
-                ->retry(3, fn (int $attempt): int => 500 * 2 ** ($attempt - 1), function (\Throwable $exception): bool {
-                    if ($exception instanceof ConnectionException) {
-                        return true;
-                    }
+        for ($attempt = 0; ; $attempt++) {
+            if ($deadline->expired()) {
+                throw new AnalysisFailed(self::TimedOutMessage);
+            }
 
-                    $status = $exception instanceof RequestException ? $exception->response->status() : 0;
+            $response = null;
 
-                    return in_array($status, [408, 409, 429], true) || $status >= 500;
-                }, throw: false)
-                ->post(self::Url, $payload);
-        } catch (ConnectionException) {
-            throw new AnalysisFailed("Couldn't reach OpenAI. Check your connection and try again.");
+            try {
+                $response = Http::withToken($apiKey)
+                    ->acceptJson()
+                    ->asJson()
+                    ->connectTimeout($deadline->cap(15))
+                    ->timeout($deadline->cap(self::RequestTimeoutSeconds))
+                    ->post(self::Url, $payload);
+            } catch (ConnectionException) {
+                // Retried below; reported as a connection failure if retries run out.
+            }
+
+            $retryable = $response === null || in_array($response->status(), [408, 409, 429], true) || $response->serverError();
+            $backoffSeconds = 0.5 * 2 ** $attempt;
+
+            if ($retryable && $attempt < self::MaxRetries && $deadline->remainingSeconds() > $backoffSeconds + 1) {
+                usleep((int) ($backoffSeconds * 1_000_000));
+
+                continue;
+            }
+
+            break;
+        }
+
+        if ($response === null) {
+            throw new AnalysisFailed($deadline->expired() ? self::TimedOutMessage : "Couldn't reach OpenAI. Check your connection and try again.");
         }
 
         if ($response->failed()) {

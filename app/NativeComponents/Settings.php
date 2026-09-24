@@ -4,6 +4,7 @@ namespace App\NativeComponents;
 
 use App\Actions\DeleteItems;
 use App\Models\Item;
+use App\Scanning\ReceivesFrameAnalyses;
 use App\Services\AppSettings;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\View\View;
@@ -18,6 +19,8 @@ use Native\Mobile\Facades\Dialog;
  */
 class Settings extends NativeComponent
 {
+    use ReceivesFrameAnalyses;
+
     public const FindCriteriaMaxLength = 1000;
 
     public const SavedFindsPageSize = 50;
@@ -102,17 +105,17 @@ class Settings extends NativeComponent
         app(AppSettings::class)->set(AppSettings::ScanIntervalSeconds, (string) $this->scanIntervalSeconds);
     }
 
-    public function updatedOpenAiApiKey(string $value): void
+    public function updatedOpenAiApiKey(#[\SensitiveParameter] string $value): void
     {
         app(AppSettings::class)->set(AppSettings::OpenAiApiKey, trim($value));
     }
 
-    public function updatedEbayClientId(string $value): void
+    public function updatedEbayClientId(#[\SensitiveParameter] string $value): void
     {
         app(AppSettings::class)->set(AppSettings::EbayClientId, trim($value));
     }
 
-    public function updatedEbayClientSecret(string $value): void
+    public function updatedEbayClientSecret(#[\SensitiveParameter] string $value): void
     {
         app(AppSettings::class)->set(AppSettings::EbayClientSecret, trim($value));
     }

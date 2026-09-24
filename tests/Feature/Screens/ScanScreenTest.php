@@ -10,6 +10,7 @@ use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ScanSession;
 use App\NativeComponents\Scan;
+use App\NativeComponents\Settings;
 use App\Scanning\LiveScanState;
 use App\Services\AppSettings;
 use Illuminate\Support\Facades\Storage;
@@ -95,6 +96,24 @@ function pickMedia($component, string $path, string $type)
         'files' => [['path' => $path, 'type' => $type, 'mimeType' => $type === 'video' ? 'video/quicktime' : 'image/heic']],
         'count' => 1,
         'id' => Scan::UploadPickerId,
+    ]);
+}
+
+/**
+ * Deliver the imported JPEG for a photo pick into the directory Scan handed to ThriftyCamera.ImportImage.
+ */
+function importedFrame($component, int $pick = -1, string $name = 'photo.jpg')
+{
+    $calls = array_values($component->bridge()->callsTo('ThriftyCamera.ImportImage'));
+    $directory = $calls[$pick < 0 ? count($calls) + $pick : $pick]['params']['directory'];
+    file_put_contents($directory.'/'.$name, 'jpeg');
+
+    return $component->emitNative(FrameCaptured::class, [
+        'path' => $directory.'/'.$name,
+        'source' => 'image',
+        'width' => 1280,
+        'height' => 960,
+        'capturedAt' => '2026-09-23T10:00:00Z',
     ]);
 }
 
@@ -373,15 +392,17 @@ it('imports an uploaded HEIC photo through the plugin and analyzes it once', fun
     $picked = pickedTempFile('heic');
     $component = pickMedia(Native::test(Scan::class), $picked, 'image')
         ->assertNativeCalled('ThriftyCamera.ImportImage', fn (array $params) => $params['imagePath'] === $picked
-            && $params['directory'] === Storage::disk('local')->path('frames'))
+            && str_starts_with($params['directory'], Storage::disk('local')->path('frames/import-')))
         ->assertSee('Uploaded photo');
 
     expect(ScanSession::sole()->source_type)->toBe('image');
     $this->asyncFake->assertNotDispatched();
 
-    captureFrame($component, 'image', 'photo.jpg')->assertNativeCalled('ThriftyCamera.Shutter');
+    importedFrame($component)->assertNativeCalled('ThriftyCamera.Shutter');
 
     $this->asyncFake->assertDispatchedTimes(1);
+    $this->asyncFake->assertDispatched(fn (array $dispatch) => $dispatch['work']['args'][1] === 'frames/photo.jpg');
+    expect(Storage::disk('local')->directories('frames'))->toBe([]);
     expect(file_exists($picked))->toBeFalse()
         ->and(scanState()->stillPreviewPath)->toStartWith('previews/');
 
@@ -395,7 +416,7 @@ it('reports a photo that arrives while every slot is busy', function () {
     scanState()->pending['busy'] = ['sessionId' => 's', 'frameRunId' => 'r', 'dispatchedAt' => time()];
 
     $component = pickMedia(Native::test(Scan::class), pickedTempFile('jpg'), 'image');
-    captureFrame($component, 'image', 'photo.jpg')->assertSee('Every analysis slot is busy');
+    importedFrame($component)->assertSee('Every analysis slot is busy');
 
     $this->asyncFake->assertNotDispatched();
 });
@@ -521,6 +542,127 @@ it('expires analyses that never report back', function () {
     Native::test(Scan::class)->assertSee('1/4');
 
     expect(array_keys(scanState()->pending))->toBe(['recent']);
+});
+
+it('ties each photo import to its own pick', function () {
+    $first = pickedTempFile('heic');
+    $second = pickedTempFile('heic');
+    $component = pickMedia(Native::test(Scan::class), $first, 'image');
+    pickMedia($component, $second, 'image');
+
+    importedFrame($component, 0, 'first.jpg');
+
+    $this->asyncFake->assertNotDispatched();
+    expect(file_exists($first))->toBeFalse()
+        ->and(file_exists($second))->toBeTrue();
+    Storage::disk('local')->assertMissing('frames/first.jpg');
+
+    importedFrame($component, 1, 'second.jpg');
+
+    $this->asyncFake->assertDispatched(fn (array $dispatch) => $dispatch['work']['args'][0] === scanState()->sessionId
+        && $dispatch['work']['args'][1] === 'frames/second.jpg');
+    expect(file_exists($second))->toBeFalse();
+});
+
+it('abandons photo imports when the tab is left', function () {
+    $picked = pickedTempFile('heic');
+    $component = pickMedia(Native::test(Scan::class), $picked, 'image');
+
+    $component->instance()->unmount();
+
+    expect(file_exists($picked))->toBeFalse()
+        ->and(scanState()->pendingImports)->toBe([]);
+});
+
+it('sweeps stale previews and import directories on mount', function () {
+    $disk = Storage::disk('local');
+    $disk->put('previews/stale.jpg', 'x');
+    $disk->put('previews/current.jpg', 'x');
+    $disk->put('frames/import-stale/photo.jpg', 'x');
+    $disk->put('frames/kept.jpg', 'x');
+    scanState()->stillPreviewPath = 'previews/current.jpg';
+
+    Native::test(Scan::class);
+
+    $disk->assertMissing('previews/stale.jpg');
+    $disk->assertExists('previews/current.jpg');
+    $disk->assertExists('frames/kept.jpg');
+    expect($disk->directories('frames'))->toBe([]);
+});
+
+it('plays the shutter and flash for video frames', function () {
+    $component = pickMedia(Native::test(Scan::class), '/tmp/Gallery/clip.mov', 'video');
+
+    captureFrame($component, 'video', 'v1.jpg', scanState()->videoRunId)
+        ->assertNativeCalled('ThriftyCamera.Shutter')
+        ->assertElement('column', fn (array $node) => ($node['ref'] ?? null) === 'snapshot-flash');
+});
+
+it('deletes the picked video when its extraction is cancelled', function () {
+    $picked = pickedTempFile('mov');
+    $component = pickMedia(Native::test(Scan::class), $picked, 'video');
+
+    $component->tap('toggle-live');
+
+    expect(file_exists($picked))->toBeFalse();
+});
+
+it('ignores camera failures from another video run', function () {
+    $component = pickMedia(Native::test(Scan::class), '/tmp/Gallery/clip.mov', 'video')
+        ->emitNative(CameraFailed::class, ['message' => 'Old run failed.', 'runId' => 'old-run'])
+        ->assertDontSee('Old run failed.')
+        ->assertSee('Stop');
+
+    $component->emitNative(CameraFailed::class, ['message' => 'This video could not be opened.', 'runId' => scanState()->videoRunId])
+        ->assertSee('This video could not be opened.');
+});
+
+it('settles an analysis that failed for a missing key while another screen was active', function () {
+    $component = Native::test(Scan::class)->tap('toggle-live');
+    captureFrame($component);
+    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, null);
+
+    $component->call('onResume')
+        ->assertSee('0/4')
+        ->assertSee('Add your OpenAI API key in Settings to start scanning.');
+});
+
+it('settles results delivered while Settings is on top', function () {
+    $component = Native::test(Scan::class)->tap('toggle-live');
+    captureFrame($component);
+    $taskId = array_key_last(scanState()->pending);
+
+    Native::test(Settings::class)->emitNative(Scan::FrameAnalyzedEvent, [
+        'id' => $taskId,
+        'status' => 'failed',
+        'exceptionClass' => MissingApiKey::class,
+        'message' => 'Add your OpenAI API key in Settings to start scanning.',
+    ]);
+
+    expect(scanState()->pending)->toBe([]);
+    $component->call('onResume')->assertSee('0/4')->assertSee('Add your OpenAI API key');
+});
+
+it('keeps a watchdog-timed-out analysis until its frame run lands, then shows and chimes its finds', function () {
+    $component = Native::test(Scan::class)->tap('toggle-live');
+    captureFrame($component);
+    $taskId = array_key_last(scanState()->pending);
+
+    failAnalysis($component, 'RuntimeException', 'The async task did not complete within 600 seconds.')
+        ->assertSee('1/4')
+        ->assertDontSee('did not complete');
+
+    expect(scanState()->pending[$taskId]['timedOut'])->toBeTrue();
+
+    $run = FrameRun::factory()->create(['id' => scanState()->pending[$taskId]['frameRunId'], 'status' => FrameRunStatus::Completed, 'completed_at' => now()]);
+    Item::factory()->create(['frame_run_id' => $run->id, 'name' => 'Late lamp']);
+    scanState()->lastReconcileAt = 0;
+    scanState()->lastRevealAt = 0;
+
+    $component->firePolls()
+        ->assertSee('0/4')
+        ->assertSee('Late lamp')
+        ->assertNativeCalled('ThriftyCamera.Chime');
 });
 
 it('ignores results for analyses it is not waiting on', function () {

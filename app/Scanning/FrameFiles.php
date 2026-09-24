@@ -14,6 +14,8 @@ class FrameFiles
 
     public const PreviewsDirectory = 'previews';
 
+    public const ImportPrefix = 'import-';
+
     /**
      * Absolute path of the frames directory, as handed to the camera plugin.
      */
@@ -52,6 +54,72 @@ class FrameFiles
         $previewPath = self::PreviewsDirectory.'/'.Str::ulid().'.jpg';
 
         return $disk->exists($framePath) && $disk->copy($framePath, $previewPath) ? $previewPath : null;
+    }
+
+    /**
+     * A per-pick import directory under `frames/`, created up front, as an absolute path for the plugin.
+     */
+    public static function importDirectory(string $token): string
+    {
+        $directory = self::FramesDirectory.'/'.self::ImportPrefix.$token;
+        Storage::disk('local')->makeDirectory($directory);
+
+        return Storage::disk('local')->path($directory);
+    }
+
+    /**
+     * The import token of a frame written into an import directory, or null for any other frame.
+     */
+    public static function importToken(string $framePath): ?string
+    {
+        $directory = basename(dirname($framePath));
+
+        return str_starts_with($directory, self::ImportPrefix) ? substr($directory, strlen(self::ImportPrefix)) : null;
+    }
+
+    /**
+     * Move an imported frame to the top of `frames/`, like every other frame, and drop its import directory.
+     *
+     * @return string The new frame path, relative to the `local` disk.
+     */
+    public function adoptImportedFrame(string $framePath): string
+    {
+        $disk = Storage::disk('local');
+        $target = self::FramesDirectory.'/'.basename($framePath);
+        $disk->move($framePath, $target);
+        $disk->deleteDirectory(dirname($framePath));
+
+        return $target;
+    }
+
+    public function deleteImportDirectory(string $token): void
+    {
+        Storage::disk('local')->deleteDirectory(self::FramesDirectory.'/'.self::ImportPrefix.$token);
+    }
+
+    /**
+     * Remove stage previews and import directories left behind by an earlier run of the app (e.g. after a kill).
+     *
+     * @param  list<string>  $keepPreviews  Preview paths still in use.
+     * @param  list<string>  $keepImports  Import tokens still in progress.
+     */
+    public function sweep(array $keepPreviews, array $keepImports): void
+    {
+        $disk = Storage::disk('local');
+
+        foreach ($disk->files(self::PreviewsDirectory) as $preview) {
+            if (! in_array($preview, $keepPreviews, true)) {
+                $disk->delete($preview);
+            }
+        }
+
+        foreach ($disk->directories(self::FramesDirectory) as $directory) {
+            $token = self::importToken($directory.'/x');
+
+            if ($token !== null && ! in_array($token, $keepImports, true)) {
+                $disk->deleteDirectory($directory);
+            }
+        }
     }
 
     public function delete(?string $relativePath): void

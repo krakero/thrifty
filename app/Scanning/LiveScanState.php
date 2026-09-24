@@ -37,8 +37,16 @@ class LiveScanState
     /** The running video extraction, whose frames are the only video frames accepted. */
     public ?string $videoRunId = null;
 
-    /** Absolute path of the picked gallery file, removed once it has been imported or played. */
+    /** Absolute path of the picked gallery video, removed once it has been played or cancelled. */
     public ?string $pickedMediaPath = null;
+
+    /**
+     * Photo imports in progress, keyed by the token naming their import directory (`frames/import-{token}`),
+     * so each imported frame is tied to its own pick and session.
+     *
+     * @var array<string, array{pickedPath: string, sessionId: string}>
+     */
+    public array $pendingImports = [];
 
     /** The uploaded photo or latest video frame shown on the stage, relative to the `local` disk. */
     public ?string $stillPreviewPath = null;
@@ -49,7 +57,9 @@ class LiveScanState
     /**
      * Analyses in flight, keyed by async task id.
      *
-     * @var array<string, array{sessionId: string, frameRunId: string, dispatchedAt: int}>
+     * `timedOut` marks an analysis the vendor watchdog gave up on; it still finishes and is settled from its FrameRun.
+     *
+     * @var array<string, array{sessionId: string, frameRunId: string, dispatchedAt: int, timedOut?: bool}>
      */
     public array $pending = [];
 

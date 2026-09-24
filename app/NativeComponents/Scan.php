@@ -11,7 +11,9 @@ use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ScanSession;
 use App\Scanning\FrameFiles;
+use App\Scanning\FrameResults;
 use App\Scanning\LiveScanState;
+use App\Scanning\ReceivesFrameAnalyses;
 use App\Services\AppSettings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -34,11 +36,13 @@ use Thrifty\Camera\Facades\ThriftyCamera;
  */
 class Scan extends NativeComponent
 {
+    use ReceivesFrameAnalyses;
+
     public const FrameAnalyzedEvent = 'frame-analyzed';
 
     public const UploadPickerId = 'scan-upload';
 
-    public const RevealIntervalSeconds = 0.5;
+    public const RevealIntervalSeconds = FrameResults::RevealIntervalSeconds;
 
     public const FlashSeconds = 0.32;
 
@@ -56,6 +60,8 @@ class Scan extends NativeComponent
 
     public function mount(): void
     {
+        $state = $this->state();
+        app(FrameFiles::class)->sweep(array_filter([$state->stillPreviewPath]), array_keys($state->pendingImports));
         $this->reconcile(settleRecent: true);
     }
 
@@ -71,6 +77,7 @@ class Scan extends NativeComponent
     public function unmount(): void
     {
         $this->stopMedia();
+        $this->abandonImports();
         $this->state()->facing = LiveScanState::FacingOff;
         $this->endSession();
 
@@ -162,8 +169,16 @@ class Scan extends NativeComponent
         $files = app(FrameFiles::class);
         $framePath = FrameFiles::relativePath($path);
 
+        if ($source === 'image') {
+            $framePath = $this->adoptImport($framePath);
+
+            if ($framePath === null) {
+                return;
+            }
+        }
+
         $accepted = match ($source) {
-            'image' => $state->source === ScanSource::Image->value && $state->pickedMediaPath !== null,
+            'image' => $state->source === ScanSource::Image->value,
             'video' => $state->source === ScanSource::Video->value && $runId !== null && $runId === $state->videoRunId,
             default => $state->source === ScanSource::Camera->value,
         };
@@ -172,11 +187,6 @@ class Scan extends NativeComponent
             $files->delete($framePath);
 
             return;
-        }
-
-        if ($source === 'image') {
-            $files->deletePicked($state->pickedMediaPath);
-            $state->pickedMediaPath = null;
         }
 
         if ($source === 'image' || $source === 'video') {
@@ -193,10 +203,8 @@ class Scan extends NativeComponent
             return;
         }
 
-        if ($source !== 'video') {
-            $state->flashAt = microtime(true);
-            ThriftyCamera::shutter();
-        }
+        $state->flashAt = microtime(true);
+        ThriftyCamera::shutter();
 
         $this->analyze($state->sessionId, $framePath, $capturedAt);
     }
@@ -223,15 +231,22 @@ class Scan extends NativeComponent
         }
     }
 
+    /**
+     * Failures from an earlier (cancelled or replaced) video run are ignored.
+     */
     #[On(CameraFailed::class)]
-    public function cameraFailed(string $message): void
+    public function cameraFailed(string $message, ?string $runId = null): void
     {
         $state = $this->state();
+
+        if ($runId !== null && $runId !== $state->videoRunId) {
+            return;
+        }
+
         $state->snapshotDueAt = 0.0;
 
-        if ($state->source === ScanSource::Image->value && $state->pickedMediaPath !== null) {
-            app(FrameFiles::class)->deletePicked($state->pickedMediaPath);
-            $state->pickedMediaPath = null;
+        if ($state->source === ScanSource::Image->value && $state->pendingImports !== []) {
+            $this->abandonImports($state->sessionId);
         } elseif ($state->videoRunId === null) {
             // A failed video extraction is still followed by VideoFramesExtracted, which winds it down.
             $state->scanning = false;
@@ -261,32 +276,6 @@ class Scan extends NativeComponent
         $isVideo = ($file['type'] ?? null) === 'video' || str_starts_with((string) ($file['mimeType'] ?? ''), 'video/');
 
         $isVideo ? $this->loadVideo($file['path']) : $this->loadImage($file['path']);
-    }
-
-    /**
-     * Shared delivery for every {@see AnalyzeFrame} dispatch, so results land even after a tab switch.
-     *
-     * @param  array<string, mixed>|null  $result
-     */
-    #[On(self::FrameAnalyzedEvent)]
-    public function frameAnalyzed(string $id, string $status, mixed $result = null, ?string $exceptionClass = null, ?string $message = null): void
-    {
-        $state = $this->state();
-
-        if (! isset($state->pending[$id])) {
-            return;
-        }
-
-        unset($state->pending[$id]);
-
-        if ($status === 'finished' && is_array($result)) {
-            $this->acceptResult(array_values(array_filter($result['itemIds'] ?? [], 'is_string')));
-        } else {
-            $state->fail(
-                $message ?: 'Frame analysis failed',
-                is_a((string) $exceptionClass, MissingApiKey::class, true),
-            );
-        }
     }
 
     // ── Rendering ────────────────────────────────────
@@ -406,6 +395,10 @@ class Scan extends NativeComponent
             ThriftyCamera::cancelVideoExtraction($state->videoRunId);
             $state->videoRunId = null;
         }
+
+        // The run's final VideoFramesExtracted is ignored once it's no longer current, so clean up here.
+        app(FrameFiles::class)->deletePicked($state->pickedMediaPath);
+        $state->pickedMediaPath = null;
     }
 
     private function beginSession(ScanSource $source, ?string $sourceName = null): void
@@ -443,9 +436,58 @@ class Scan extends NativeComponent
         $state->facing = LiveScanState::FacingOff;
         $state->sourceLabel = 'Uploaded photo';
         $this->beginSession(ScanSource::Image, basename($absolutePath));
-        $state->pickedMediaPath = $absolutePath;
 
-        ThriftyCamera::importImage($absolutePath, FrameFiles::framesDirectory());
+        $token = strtolower((string) Str::ulid());
+        $state->pendingImports[$token] = ['pickedPath' => $absolutePath, 'sessionId' => (string) $state->sessionId];
+
+        ThriftyCamera::importImage($absolutePath, FrameFiles::importDirectory($token));
+    }
+
+    /**
+     * Tie an imported frame to its pick: it's kept only while that pick's session is current.
+     *
+     * @return string|null The frame's final path, or null when it was discarded.
+     */
+    private function adoptImport(string $framePath): ?string
+    {
+        $state = $this->state();
+        $files = app(FrameFiles::class);
+        $token = FrameFiles::importToken($framePath);
+        $import = $token !== null ? ($state->pendingImports[$token] ?? null) : null;
+
+        if ($token !== null) {
+            unset($state->pendingImports[$token]);
+        }
+
+        $files->deletePicked($import['pickedPath'] ?? null);
+
+        if ($import === null || $import['sessionId'] !== $state->sessionId) {
+            $files->delete($framePath);
+
+            if ($token !== null) {
+                $files->deleteImportDirectory($token);
+            }
+
+            return null;
+        }
+
+        return $files->adoptImportedFrame($framePath);
+    }
+
+    /**
+     * Drop photo imports still in progress (all of them, or one session's) along with their picked originals.
+     */
+    private function abandonImports(?string $onlySessionId = null): void
+    {
+        $state = $this->state();
+
+        foreach ($state->pendingImports as $token => $import) {
+            if ($onlySessionId === null || $import['sessionId'] === $onlySessionId) {
+                app(FrameFiles::class)->deletePicked($import['pickedPath']);
+                app(FrameFiles::class)->deleteImportDirectory($token);
+                unset($state->pendingImports[$token]);
+            }
+        }
     }
 
     private function loadVideo(string $absolutePath): void
@@ -531,28 +573,13 @@ class Scan extends NativeComponent
     }
 
     /**
-     * @param  list<string>  $itemIds
-     */
-    private function acceptResult(array $itemIds): void
-    {
-        $state = $this->state();
-
-        if ($itemIds !== []) {
-            $state->enqueueReveal($itemIds);
-            $state->revealDue(microtime(true), self::RevealIntervalSeconds);
-            ThriftyCamera::chime();
-        }
-
-        $state->clearError();
-    }
-
-    /**
-     * Settle analyses whose shared result was delivered while another screen was active, by their FrameRun.
+     * Settle analyses whose shared result never reached Scan, by their FrameRun.
      *
-     * The agent saves the FrameRun under the pre-generated id on success and on every failure, so a run row means
-     * the analysis is over. While Scan is showing (`$settleRecent` false) a just-finished run is left for its
-     * shared event, which is moments away and also plays the chime. Anything that never reports back is dropped
-     * once it has outlived the task's watchdog.
+     * The agent saves the FrameRun under the pre-generated id on success and on every failure except a missing API
+     * key, so a run row means the analysis is over, and no run while no key is saved means it failed for that.
+     * While Scan is showing (`$settleRecent` false) a just-finished run is left for its shared event, which is
+     * moments away and also plays the chime; a watchdog-timed-out entry gets no such event, so it settles at once
+     * and chimes here. Anything that never reports back is dropped once it has outlived the task's watchdog.
      */
     private function reconcile(bool $settleRecent): void
     {
@@ -568,19 +595,25 @@ class Scan extends NativeComponent
             ->get()
             ->keyBy('id');
         $graceCutoff = now()->subSeconds(self::SettleGraceSeconds);
+        $keyMissing = app(AppSettings::class)->openAiApiKey() === null;
+        $results = app(FrameResults::class);
 
         foreach ($state->pending as $taskId => $entry) {
             $run = $runs->get($entry['frameRunId']);
+            $timedOut = $entry['timedOut'] ?? false;
 
             if ($run === null) {
-                if (time() - $entry['dispatchedAt'] > self::PendingExpirySeconds) {
+                if ($keyMissing && ! $timedOut) {
+                    unset($state->pending[$taskId]);
+                    $state->fail((new MissingApiKey)->getMessage(), needsApiKey: true);
+                } elseif (time() - $entry['dispatchedAt'] > self::PendingExpirySeconds) {
                     unset($state->pending[$taskId]);
                 }
 
                 continue;
             }
 
-            if (! $settleRecent && $run->completed_at !== null && $run->completed_at->greaterThan($graceCutoff)) {
+            if (! $settleRecent && ! $timedOut && $run->completed_at !== null && $run->completed_at->greaterThan($graceCutoff)) {
                 continue;
             }
 
@@ -592,8 +625,7 @@ class Scan extends NativeComponent
                 continue;
             }
 
-            $state->enqueueReveal(Item::query()->where('frame_run_id', $run->id)->pluck('id')->all());
-            $state->clearError();
+            $results->accept(Item::query()->where('frame_run_id', $run->id)->pluck('id')->all(), chime: $timedOut);
         }
 
         $state->revealDue(microtime(true), self::RevealIntervalSeconds);

@@ -40,67 +40,60 @@ return [
     'theme' => [
 
         'light' => [
-            // Primary brand color — used for filled buttons, active states, key accents.
-            'primary' => '#0F766E',
-            'on-primary' => '#FFFFFF',
+            // Thrifty is dark-only: light and dark share one warm-charcoal palette.
+            'primary' => '#FF6B4A',
+            'on-primary' => '#1A0F0B',
 
-            // Secondary / muted action color.
-            'secondary' => '#475569',
-            'on-secondary' => '#FFFFFF',
+            'secondary' => '#3A342E',
+            'on-secondary' => '#F5EFE6',
 
-            // Surface = cards, sheets, dialogs. Background = page root.
-            'surface' => '#FFFFFF',
-            'on-surface' => '#1B1B18',
-            'background' => '#FAFAFA',
-            'on-background' => '#1B1B18',
+            'surface' => '#1E1B18',
+            'on-surface' => '#F5EFE6',
+            'background' => '#141210',
+            'on-background' => '#F5EFE6',
 
-            // Surface variant = filled text fields, muted tonal surfaces.
-            // on-surface-variant = muted label/hint text on those surfaces.
-            'surface-variant' => '#FAFAFA',
-            'on-surface-variant' => '#706F6C',
+            'surface-variant' => '#2A2622',
+            'on-surface-variant' => '#A89F94',
 
-            // Outline = neutral borders (text fields, dividers, cards).
-            'outline' => '#E5E5E5',
+            'outline' => '#3A342E',
 
-            // Destructive actions — maps to `variant="destructive"` on components.
-            'destructive' => '#B91C1C',
-            'on-destructive' => '#FFFFFF',
+            'destructive' => '#FF5A5F',
+            'on-destructive' => '#1A0B0B',
 
-            // Tertiary accent — for highlights, badges, emphasis not covered by primary.
-            'accent' => '#C2410C',
-            'on-accent' => '#FFFFFF',
+            // Mint "profit" accent for resale values and live state.
+            'accent' => '#5EE6A8',
+            'on-accent' => '#0B1F16',
         ],
 
         'dark' => [
-            // Leave empty or partial to auto-derive from `light` (luminance inversion).
-            // Specify any token here to override the derived value.
-            'primary' => '#14B8A6',
-            'on-primary' => '#FFFFFF',
+            'primary' => '#FF6B4A',
+            'on-primary' => '#1A0F0B',
 
-            'secondary' => '#94A3B8',
-            'on-secondary' => '#0F172A',
+            'secondary' => '#3A342E',
+            'on-secondary' => '#F5EFE6',
 
-            'surface' => '#161615',
-            'on-surface' => '#EDEDEC',
-            'background' => '#0A0A0A',
-            'on-background' => '#EDEDEC',
+            'surface' => '#1E1B18',
+            'on-surface' => '#F5EFE6',
+            'background' => '#141210',
+            'on-background' => '#F5EFE6',
 
-            'surface-variant' => '#1F1F1E',
-            'on-surface-variant' => '#A1A09A',
+            'surface-variant' => '#2A2622',
+            'on-surface-variant' => '#A89F94',
 
-            'outline' => '#3E3E3A',
+            'outline' => '#3A342E',
 
-            'destructive' => '#F87171',
-            'on-destructive' => '#0F172A',
+            'destructive' => '#FF5A5F',
+            'on-destructive' => '#1A0B0B',
 
-            'accent' => '#FDBA74',
-            'on-accent' => '#0F172A',
+            // Mint "profit" accent for resale values and live state.
+            'accent' => '#5EE6A8',
+            'on-accent' => '#0B1F16',
         ],
 
         // Corner radii (points / dp).
         'radius-sm' => 4,
-        'radius-md' => 8,
-        'radius-lg' => 16,
+        'radius-md' => 12,
+        'radius-lg' => 20,
         'radius-full' => 9999,
 
         // Font size scale (points / sp).
@@ -111,9 +104,10 @@ return [
     ],
 
     'fonts' => [
-        'default' => 'System',
-        'accent' => 'Archivo+Black-Regular',
-        'lobster' => 'Lobster+Two-Regular',
+        'default' => 'BricolageGrotesque-Regular',
+        'display' => 'BricolageGrotesque-ExtraBold',
+        'semibold' => 'BricolageGrotesque-SemiBold',
+        'mono' => 'DMMono-Medium',
     ],
 
 ];

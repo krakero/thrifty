@@ -16,6 +16,11 @@ class FrameFiles
 
     public const ImportPrefix = 'import-';
 
+    /** Where nativephp/mobile-camera's gallery picker copies picked files, inside the app's temporary directory. */
+    public const PickerDirectory = 'Gallery';
+
+    public const PickerFilePattern = 'gallery_selected_*';
+
     /**
      * Absolute path of the frames directory, as handed to the camera plugin.
      */
@@ -118,6 +123,23 @@ class FrameFiles
 
             if ($token !== null && ! in_array($token, $keepImports, true)) {
                 $disk->deleteDirectory($directory);
+            }
+        }
+    }
+
+    /**
+     * Remove gallery copies left in the picker's temporary directory (e.g. a video picked before the app was
+     * killed). Recent files and the ones still in use are kept.
+     *
+     * @param  list<string>  $keep  Absolute paths still in use.
+     */
+    public function sweepPickedMedia(array $keep, ?string $directory = null, int $minimumAgeSeconds = 60): void
+    {
+        $directory ??= rtrim(sys_get_temp_dir(), '/').'/'.self::PickerDirectory;
+
+        foreach (glob($directory.'/'.self::PickerFilePattern) ?: [] as $file) {
+            if (is_file($file) && ! in_array($file, $keep, true) && time() - (int) filemtime($file) >= $minimumAgeSeconds) {
+                @unlink($file);
             }
         }
     }

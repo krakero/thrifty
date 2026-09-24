@@ -3,6 +3,7 @@
 namespace App\Scanning;
 
 use App\Enums\ScanSource;
+use App\Models\ScanSession;
 use Illuminate\Support\Facades\Event;
 use Thrifty\Camera\Events\CameraFailed;
 use Thrifty\Camera\Events\FrameCaptured;
@@ -123,8 +124,36 @@ class VideoRunDrainer
         $this->files->deletePicked($this->state->pickedMediaPath);
         $this->state->pickedMediaPath = null;
 
-        if ($count === 0 && $this->state->error === null) {
-            $this->state->fail('No frames could be read from this video.');
+        if ($count === 0) {
+            if ($this->state->error === null) {
+                $this->state->fail('No frames could be read from this video.');
+            }
+
+            // Nothing to show or analyze: end the session so the stage goes back to the reticle.
+            if ($this->state->stillPreviewPath === null && $this->state->sessionId !== null) {
+                ScanSession::query()->whereKey($this->state->sessionId)->whereNull('ended_at')->first()?->update(['ended_at' => now()]);
+                $this->state->sessionId = null;
+            }
+        }
+    }
+
+    /**
+     * Apply a changed scan interval to the running video, as the web's `changeScanInterval` does while scanning.
+     * Needs the plugin's `setVideoFrameInterval` bridge; without it the new interval applies from the next video.
+     */
+    public function syncInterval(int $seconds): void
+    {
+        $runId = $this->state->videoRunId;
+
+        if ($runId === null || $this->state->videoIntervalSeconds === $seconds) {
+            return;
+        }
+
+        $camera = ThriftyCamera::getFacadeRoot();
+
+        if (method_exists($camera, 'setVideoFrameInterval')) {
+            $camera->setVideoFrameInterval($runId, $seconds);
+            $this->state->videoIntervalSeconds = $seconds;
         }
     }
 }

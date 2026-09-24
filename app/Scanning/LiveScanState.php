@@ -38,6 +38,9 @@ class LiveScanState
     /** The running video extraction, whose frames are the only video frames accepted. */
     public ?string $videoRunId = null;
 
+    /** The sampling interval the running video extraction was last given. */
+    public ?int $videoIntervalSeconds = null;
+
     /** Absolute path of the picked gallery video, removed once it has been played or cancelled. */
     public ?string $pickedMediaPath = null;
 
@@ -93,6 +96,9 @@ class LiveScanState
 
     public bool $errorNeedsApiKey = false;
 
+    /** The error is a denied camera permission, which only the iOS Settings app can fix. */
+    public bool $errorNeedsCameraPermission = false;
+
     /** Hash of the API key saved when a key error was shown, so the banner can clear once the key changes. */
     public ?string $apiKeyAtError = null;
 
@@ -140,6 +146,7 @@ class LiveScanState
     {
         $this->error = $message;
         $this->errorNeedsApiKey = $needsApiKey || str_contains($message, 'API key');
+        $this->errorNeedsCameraPermission = str_contains($message, 'Camera access');
         $this->apiKeyAtError = $this->errorNeedsApiKey ? self::keyFingerprint(app(AppSettings::class)->openAiApiKey()) : null;
     }
 
@@ -159,6 +166,7 @@ class LiveScanState
     {
         $this->error = null;
         $this->errorNeedsApiKey = false;
+        $this->errorNeedsCameraPermission = false;
         $this->apiKeyAtError = null;
     }
 

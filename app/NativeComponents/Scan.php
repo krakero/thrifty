@@ -25,6 +25,7 @@ use Native\Mobile\Attributes\On;
 use Native\Mobile\Edge\NativeComponent;
 use Native\Mobile\Events\Gallery\MediaSelected;
 use Native\Mobile\Facades\Camera;
+use Native\Mobile\Facades\System;
 use Thrifty\Camera\Events\CameraFailed;
 use Thrifty\Camera\Events\CameraStarted;
 use Thrifty\Camera\Events\FrameCaptured;
@@ -63,6 +64,10 @@ class Scan extends NativeComponent
     {
         $state = $this->state();
         app(FrameFiles::class)->sweep(array_filter([$state->stillPreviewPath]), array_keys($state->pendingImports));
+        app(FrameFiles::class)->sweepPickedMedia(array_values(array_filter([
+            $state->pickedMediaPath,
+            ...array_column($state->pendingImports, 'pickedPath'),
+        ])));
         app(VideoRunDrainer::class)->listenGlobally();
         app(VideoRunDrainer::class)->drain();
         $this->reconcile(settleRecent: true);
@@ -71,6 +76,7 @@ class Scan extends NativeComponent
     public function onResume(): void
     {
         $this->state()->clearResolvedKeyError();
+        app(VideoRunDrainer::class)->syncInterval(app(AppSettings::class)->scanIntervalSeconds());
         app(VideoRunDrainer::class)->drain();
         $this->reconcile(settleRecent: true);
     }
@@ -156,6 +162,14 @@ class Scan extends NativeComponent
     public function openSettings(): void
     {
         $this->navigate('/settings');
+    }
+
+    /**
+     * Camera permission can only be turned back on in the iOS Settings app.
+     */
+    public function openAppSettings(): void
+    {
+        System::appSettings();
     }
 
     // ── Native events ────────────────────────────────
@@ -595,9 +609,10 @@ class Scan extends NativeComponent
         $state->pickedMediaPath = $absolutePath;
         $state->scanning = true;
 
+        $state->videoIntervalSeconds = app(AppSettings::class)->scanIntervalSeconds();
         $state->videoRunId = ThriftyCamera::extractVideoFrames(
             $absolutePath,
-            app(AppSettings::class)->scanIntervalSeconds(),
+            $state->videoIntervalSeconds,
             FrameFiles::framesDirectory(),
         );
     }

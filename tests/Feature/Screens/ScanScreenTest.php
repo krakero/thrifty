@@ -11,6 +11,7 @@ use App\Models\Item;
 use App\Models\ScanSession;
 use App\NativeComponents\Scan;
 use App\NativeComponents\Settings;
+use App\Scanning\FrameFiles;
 use App\Scanning\LiveScanState;
 use App\Services\AppSettings;
 use Illuminate\Support\Facades\Storage;
@@ -21,6 +22,7 @@ use Thrifty\Camera\Events\CameraFailed;
 use Thrifty\Camera\Events\CameraStarted;
 use Thrifty\Camera\Events\FrameCaptured;
 use Thrifty\Camera\Events\VideoFramesExtracted;
+use Thrifty\Camera\ThriftyCamera;
 use Thrifty\Camera\VideoRunJournal;
 
 beforeEach(function () {
@@ -922,6 +924,78 @@ it('keeps the camera menu node stable while the stage changes under it', functio
 
     expect(scanState()->stillPreviewPath)->not->toBeNull()
         ->and($after)->toBe($before);
+});
+
+it('ends the session when a video yields no frames, so the stage shows the reticle', function () {
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+
+    $component->emitNative(VideoFramesExtracted::class, ['count' => 0, 'runId' => scanState()->videoRunId])
+        ->assertSee('No frames could be read from this video.')
+        ->assertSee('Paused');
+
+    expect(scanState()->sessionId)->toBeNull()
+        ->and(ScanSession::sole()->ended_at)->not->toBeNull();
+});
+
+it('applies a changed scan interval to the running video on return from Settings', function () {
+    $camera = new class extends ThriftyCamera
+    {
+        /** @var list<array{string, int}> */
+        public array $intervals = [];
+
+        public function setVideoFrameInterval(string $runId, int $seconds): void
+        {
+            $this->intervals[] = [$runId, $seconds];
+        }
+    };
+    app()->instance(ThriftyCamera::class, $camera);
+    Thrifty\Camera\Facades\ThriftyCamera::clearResolvedInstances();
+
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    $runId = scanState()->videoRunId;
+
+    $component->call('onResume');
+    expect($camera->intervals)->toBe([]);
+
+    app(AppSettings::class)->set(AppSettings::ScanIntervalSeconds, '7');
+    $component->call('onResume');
+
+    expect($camera->intervals)->toBe([[$runId, 7]]);
+});
+
+it('keeps the running video at its interval when the plugin cannot change it', function () {
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    app(AppSettings::class)->set(AppSettings::ScanIntervalSeconds, '7');
+
+    $component->call('onResume');
+
+    expect(scanState()->videoIntervalSeconds)->toBe(AppSettings::DefaultScanIntervalSeconds);
+});
+
+it('sweeps picked gallery copies left behind by an earlier run', function () {
+    $directory = sys_get_temp_dir().'/thrifty-gallery-'.uniqid();
+    mkdir($directory);
+    touch($stale = $directory.'/gallery_selected_1_0.mp4', time() - 3600);
+    touch($inUse = $directory.'/gallery_selected_2_0.mp4', time() - 3600);
+    touch($recent = $directory.'/gallery_selected_3_0.mp4');
+    touch($other = $directory.'/unrelated.mp4', time() - 3600);
+
+    app(FrameFiles::class)->sweepPickedMedia([$inUse], $directory);
+
+    expect(file_exists($stale))->toBeFalse()
+        ->and(file_exists($inUse))->toBeTrue()
+        ->and(file_exists($recent))->toBeTrue()
+        ->and(file_exists($other))->toBeTrue();
+
+    array_map('unlink', glob($directory.'/*'));
+    rmdir($directory);
+});
+
+it('offers the iOS Settings app when camera access is off', function () {
+    Native::test(Scan::class)->tap('toggle-live')
+        ->emitNative(CameraFailed::class, ['message' => 'Camera access is off — enable it in Settings.'])
+        ->tap('error-open-ios-settings')
+        ->assertNativeCalled('System.OpenAppSettings');
 });
 
 it('ignores results for analyses it is not waiting on', function () {

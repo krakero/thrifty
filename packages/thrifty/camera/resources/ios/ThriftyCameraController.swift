@@ -51,8 +51,10 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
     private var configuredPosition: AVCaptureDevice.Position?
     private var currentInput: AVCaptureDeviceInput?
     private var outputConfigured = false
-    private var reportedPermissionProblem = false
-    private var reportedMissingCamera = false
+
+    /// The most recent runtime error, recorded synchronously when posted so
+    /// a failed startRunning() can report the real cause (stateLock).
+    private var lastRuntimeError: Error?
 
     /// True only between our own startRunning() and stopRunning(). Attaching
     /// a preview layer makes AVFoundation build the capture graph even
@@ -86,12 +88,8 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
         let normalizedFacing = ["back", "front", "off"].contains(facing) ? facing : "back"
 
         sessionQueue.async {
-            // Starting a scan re-checks permission, so a denied camera is
-            // reported every time the user tries, not just once.
-            if startedScanning {
-                self.reportedPermissionProblem = false
-            }
-
+            // Choosing a camera or starting a scan is a start request: it is
+            // answered with CameraStarted or CameraFailed every time.
             guard startedScanning || self.desiredFacing != normalizedFacing else {
                 return
             }
@@ -115,11 +113,8 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             self.visiblePreviews = max(0, self.visiblePreviews - 1)
 
             if self.visiblePreviews == 0 {
-                self.reportedPermissionProblem = false
-                self.reportedMissingCamera = false
+                self.evaluateRunningState()
             }
-
-            self.evaluateRunningState()
         }
     }
 
@@ -161,8 +156,13 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
 
                 if AVCaptureDevice.authorizationStatus(for: .video) != .authorized {
                     ThriftyCameraEvents.cameraFailed(ThriftyCameraError.permissionDenied.localizedDescription)
-                } else {
+                } else if self.desiredFacing == "off" {
                     ThriftyCameraEvents.cameraFailed("Turn the camera on to take a snapshot.")
+                } else if self.currentInput == nil || !self.session.isRunning {
+                    // A camera is selected but never came up.
+                    ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
+                } else {
+                    ThriftyCameraEvents.cameraFailed("The camera didn't deliver a picture. Try again.")
                 }
             }
         }
@@ -170,6 +170,10 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
 
     // MARK: - Session lifecycle (sessionQueue)
 
+    /// Starts or stops the session to match the current state. Whenever the
+    /// camera should run, this answers with exactly one CameraStarted or
+    /// CameraFailed (no one-shot suppression: every start request that
+    /// fails is reported).
     private func evaluateRunningState() {
         let shouldRun = visiblePreviews > 0 && appIsActive && desiredFacing != "off"
 
@@ -192,14 +196,11 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
             break
         case .notDetermined:
             sessionQueue.suspend()
-            AVCaptureDevice.requestAccess(for: .video) { granted in
+            AVCaptureDevice.requestAccess(for: .video) { _ in
                 self.sessionQueue.resume()
-
-                if !granted {
-                    self.sessionQueue.async { self.reportPermissionProblem() }
-                }
             }
-            // Re-evaluates once the prompt is answered and the queue resumes.
+            // Re-evaluates (and reports either way) once the prompt is
+            // answered and the queue resumes.
             sessionQueue.async { self.evaluateRunningState() }
             return
         default:
@@ -213,25 +214,27 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
 
         sessionShouldRun = true
         if !session.isRunning {
+            stateLock.withLock { lastRuntimeError = nil }
+
+            // Synchronous: returns once the session is running or has failed.
             session.startRunning()
         }
-    }
 
-    private func reportMissingCamera() {
-        guard !reportedMissingCamera else {
+        guard session.isRunning else {
+            sessionShouldRun = false
+            let error = stateLock.withLock { lastRuntimeError }
+            ThriftyCameraEvents.cameraFailed(ThriftyCameraError.friendlyMessage(for: error, fallback: "Couldn't start the camera. Turn it off and on again."))
             return
         }
 
-        reportedMissingCamera = true
+        ThriftyCameraEvents.cameraStarted(facing: configuredPosition == .front ? "front" : "back")
+    }
+
+    private func reportMissingCamera() {
         ThriftyCameraEvents.cameraFailed(ThriftyCameraError.cameraUnavailable.localizedDescription)
     }
 
     private func reportPermissionProblem() {
-        guard !reportedPermissionProblem else {
-            return
-        }
-
-        reportedPermissionProblem = true
         ThriftyCameraEvents.cameraFailed(ThriftyCameraError.permissionDenied.localizedDescription)
     }
 
@@ -325,6 +328,7 @@ final class ThriftyCameraController: NSObject, AVCaptureVideoDataOutputSampleBuf
 
     @objc private func sessionRuntimeError(_ notification: Notification) {
         let error = notification.userInfo?[AVCaptureSessionErrorKey] as? Error
+        stateLock.withLock { lastRuntimeError = error }
 
         sessionQueue.async {
             guard self.sessionShouldRun else {

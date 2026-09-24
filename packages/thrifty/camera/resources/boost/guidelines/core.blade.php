@@ -12,7 +12,7 @@ iOS-only camera plugin for Thrifty: live scanning preview, snapshots, video fram
 
 - `facing` is `back`, `front` or `off` (`off` stops the camera).
 - While `scanning` is true a JPEG is written to `frames-directory` 0.35s after scanning starts, then every `interval` seconds. Frames use the web app's parameters: at most 960px wide, quality 0.76 (0.82 for imported images).
-- Starting a scan or a snapshot re-checks camera permission; a denied camera sends `CameraFailed` ("Camera access is off — enable it in Settings.") each time.
+- Starting a scan or a snapshot re-checks camera permission; a denied camera sends `CameraFailed` ("Camera access is off — enable it in Settings.") each time. On the simulator or without a camera, every start request fails with "No camera is available on this device."
 - A snapshot waits up to 4s for the first frame, so a Snap that also turns the camera on still captures.
 - The camera only runs while the preview is on screen and the app is in the foreground.
 
@@ -54,6 +54,7 @@ public function frameCaptured(string $path, string $source, int $width, int $hei
 </code-snippet>
 @endverbatim
 
+- `CameraStarted(string $facing)` — the session is actually running (`back`/`front`). Every start request (choosing a camera, starting a scan, the preview appearing, returning to the foreground) is answered with exactly one `CameraStarted` or `CameraFailed`, every time. Enter Live only after `CameraStarted`; on `CameraFailed`, reset the camera selector to Off. Handle repeats idempotently.
 - `FrameCaptured` — `source` is `live`, `snapshot`, `video` or `image`; `videoSeconds` and `runId` are only sent for video frames.
 - Video plays through in real time: a frame at 0.35s, then every `interval` seconds of wall-clock time, until the video ends. Ignore frames whose `runId` isn't the current run.
 - `importImage()` accepts anything iOS decodes (HEIC/HEIF, PNG, JPEG, WebP), applies EXIF orientation and writes a JPEG at most 960px wide (quality 0.82, like the web's uploads), so on-device PHP never has to read HEIC. Use it for gallery picks before analysis.

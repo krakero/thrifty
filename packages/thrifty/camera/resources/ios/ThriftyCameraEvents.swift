@@ -11,6 +11,12 @@ enum ThriftyCameraEvents {
     static let frameCaptured = "Thrifty\\Camera\\Events\\FrameCaptured"
     static let videoFramesExtracted = "Thrifty\\Camera\\Events\\VideoFramesExtracted"
     static let cameraFailed = "Thrifty\\Camera\\Events\\CameraFailed"
+    static let cameraStarted = "Thrifty\\Camera\\Events\\CameraStarted"
+
+    static func cameraStarted(facing: String) {
+        print("[ThriftyCamera] Camera started (\(facing))")
+        send(cameraStarted, ["facing": facing])
+    }
 
     static func frameCaptured(_ frame: ThriftyEncodedFrame, source: String, videoSeconds: Double? = nil, runId: String? = nil) {
         var payload: [String: Any] = [

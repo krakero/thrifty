@@ -13,6 +13,7 @@ class FrameCaptured
      * @param  string  $source  One of "live", "snapshot", "video" or "image".
      * @param  string  $capturedAt  ISO-8601 timestamp.
      * @param  float|null  $videoSeconds  Position within the video, for video frames.
+     * @param  string|null  $runId  The extraction run id, for video frames.
      */
     public function __construct(
         public string $path,
@@ -21,5 +22,6 @@ class FrameCaptured
         public int $height,
         public string $capturedAt,
         public ?float $videoSeconds = null,
+        public ?string $runId = null,
     ) {}
 }

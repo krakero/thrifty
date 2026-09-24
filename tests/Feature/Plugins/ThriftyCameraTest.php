@@ -26,10 +26,19 @@ class ThriftyCameraFixtureScreen extends NativeComponent
 
     public ?string $failure = null;
 
+    /** @var list<array{count: int, runId: string|null}> */
+    public array $extractions = [];
+
     #[On(FrameCaptured::class)]
-    public function frameCaptured(string $path, string $source, int $width, int $height, string $capturedAt, ?float $videoSeconds = null): void
+    public function frameCaptured(string $path, string $source, int $width, int $height, string $capturedAt, ?float $videoSeconds = null, ?string $runId = null): void
     {
-        $this->frames[] = compact('path', 'source', 'width', 'height', 'capturedAt', 'videoSeconds');
+        $this->frames[] = compact('path', 'source', 'width', 'height', 'capturedAt', 'videoSeconds', 'runId');
+    }
+
+    #[On(VideoFramesExtracted::class)]
+    public function videoFramesExtracted(int $count, ?string $runId = null): void
+    {
+        $this->extractions[] = compact('count', 'runId');
     }
 
     #[On(CameraFailed::class)]
@@ -61,25 +70,57 @@ it('calls the snapshot bridge method with the directory', function () {
     $bridge->assertCalled('ThriftyCamera.Snapshot', fn (array $params) => $params === ['directory' => '/tmp/frames']);
 });
 
-it('calls the video extraction bridge method', function () {
+it('starts a video extraction with a fresh run id and returns it', function () {
     $bridge = Native::fakeBridge();
 
-    ThriftyCamera::extractVideoFrames('/tmp/clip.mov', 3, '/tmp/frames');
+    $runId = ThriftyCamera::extractVideoFrames('/tmp/clip.mov', 3, '/tmp/frames');
+    $secondRunId = ThriftyCamera::extractVideoFrames('/tmp/clip.mov', 0, '/tmp/frames');
+
+    expect($runId)->toBeString()->not->toBe('')
+        ->and($secondRunId)->not->toBe($runId);
 
     $bridge->assertCalled('ThriftyCamera.ExtractVideoFrames', fn (array $params) => $params === [
         'videoPath' => '/tmp/clip.mov',
         'intervalSeconds' => 3,
         'directory' => '/tmp/frames',
+        'runId' => $runId,
     ]);
+    $bridge->assertCalled('ThriftyCamera.ExtractVideoFrames', fn (array $params) => $params['runId'] === $secondRunId
+        && $params['intervalSeconds'] === 1);
 });
 
-it('never sends an interval below one second', function () {
+it('cancels a video extraction by run id', function () {
     $bridge = Native::fakeBridge();
 
-    ThriftyCamera::extractVideoFrames('/tmp/clip.mov', 0, '/tmp/frames');
+    ThriftyCamera::cancelVideoExtraction('run-1');
 
-    $bridge->assertCalled('ThriftyCamera.ExtractVideoFrames', fn (array $params) => $params['intervalSeconds'] === 1);
+    $bridge->assertCalled('ThriftyCamera.CancelVideoExtraction', fn (array $params) => $params === ['runId' => 'run-1']);
 });
+
+it('calls the shutter bridge method', function () {
+    $bridge = Native::fakeBridge();
+
+    ThriftyCamera::shutter();
+
+    $bridge->assertCalledTimes('ThriftyCamera.Shutter', 1);
+});
+
+it('reads the device timezone', function () {
+    Native::fakeBridge()->respondTo('ThriftyCamera.DeviceTimezone', ['timezone' => 'America/Toronto']);
+
+    expect(ThriftyCamera::deviceTimezone())->toBe('America/Toronto');
+});
+
+it('returns no timezone when the device gives none or an invalid one', function (array|string|null $response) {
+    Native::fakeBridge()->respondTo('ThriftyCamera.DeviceTimezone', $response);
+
+    expect(ThriftyCamera::deviceTimezone())->toBeNull();
+})->with([
+    'no response' => [null],
+    'empty object' => [[]],
+    'unknown zone' => [['timezone' => 'Mars/Olympus']],
+    'not json' => ['nope'],
+]);
 
 it('calls the image import bridge method', function () {
     $bridge = Native::fakeBridge();
@@ -98,7 +139,7 @@ it('delivers imported image frames to on handlers', function () {
             'path' => '/frames/picked.jpg', 'source' => 'image', 'width' => 960, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z',
         ])
         ->assertSet('frames', [
-            ['path' => '/frames/picked.jpg', 'source' => 'image', 'width' => 960, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => null],
+            ['path' => '/frames/picked.jpg', 'source' => 'image', 'width' => 960, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => null, 'runId' => null],
         ]);
 });
 
@@ -135,7 +176,26 @@ it('sends a null box when the card has none', function () {
         'title' => 'Lamp', 'subtitle' => '', 'imagePath' => '/tmp/frame.jpg', 'box' => null, 'rows' => [], 'summary' => '',
     ]);
 
-    $bridge->assertCalled('ThriftyCamera.ShareFindCard', fn (array $params) => $params['box'] === null && $params['rows'] === []);
+    $bridge->assertCalled('ThriftyCamera.ShareFindCard', fn (array $params) => $params['box'] === null
+        && $params['boxes'] === []
+        && $params['rows'] === []);
+});
+
+it('sends every box in the frame with its selected flag', function () {
+    $bridge = Native::fakeBridge();
+
+    ThriftyCamera::shareFindCard([
+        'title' => 'Lamp', 'subtitle' => '', 'imagePath' => '/tmp/frame.jpg', 'rows' => [], 'summary' => '',
+        'boxes' => [
+            ['xMin' => 10, 'yMin' => 20, 'xMax' => 300, 'yMax' => 400, 'selected' => true],
+            ['xMin' => 500, 'yMin' => 500, 'xMax' => 900, 'yMax' => 950],
+        ],
+    ]);
+
+    $bridge->assertCalled('ThriftyCamera.ShareFindCard', fn (array $params) => $params['box'] === null && $params['boxes'] === [
+        ['xMin' => 10, 'yMin' => 20, 'xMax' => 300, 'yMax' => 400, 'selected' => true],
+        ['xMin' => 500, 'yMin' => 500, 'xMax' => 900, 'yMax' => 950, 'selected' => false],
+    ]);
 });
 
 it('builds events with the contract signatures', function () {
@@ -147,6 +207,10 @@ it('builds events with the contract signatures', function () {
         ->and($frame->height)->toBe(720)
         ->and($frame->capturedAt)->toBe('2026-09-23T10:00:00Z')
         ->and($frame->videoSeconds)->toBe(12.5)
+        ->and($frame->runId)->toBeNull()
+        ->and((new FrameCaptured('/frames/c.jpg', 'video', 1, 1, 'now', 1.0, 'run-1'))->runId)->toBe('run-1')
+        ->and((new VideoFramesExtracted(0, 'run-1'))->runId)->toBe('run-1')
+        ->and((new VideoFramesExtracted(2))->runId)->toBeNull()
         ->and((new FrameCaptured('/frames/b.jpg', 'live', 1, 1, 'now'))->videoSeconds)->toBeNull()
         ->and((new VideoFramesExtracted(4))->count)->toBe(4)
         ->and((new CameraFailed('Camera access denied'))->message)->toBe('Camera access denied');
@@ -190,8 +254,59 @@ it('delivers native frame payloads to on handlers by parameter name', function (
         ])
         ->emitNative(CameraFailed::class, ['message' => 'Camera access is off.'])
         ->assertSet('frames', [
-            ['path' => '/frames/live.jpg', 'source' => 'live', 'width' => 720, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => null],
-            ['path' => '/frames/video.jpg', 'source' => 'video', 'width' => 1280, 'height' => 720, 'capturedAt' => '2026-09-23T10:00:01.000Z', 'videoSeconds' => 4.5],
+            ['path' => '/frames/live.jpg', 'source' => 'live', 'width' => 720, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => null, 'runId' => null],
+            ['path' => '/frames/video.jpg', 'source' => 'video', 'width' => 1280, 'height' => 720, 'capturedAt' => '2026-09-23T10:00:01.000Z', 'videoSeconds' => 4.5, 'runId' => null],
         ])
         ->assertSet('failure', 'Camera access is off.');
+});
+
+it('delivers video run ids on frames and on the end event', function () {
+    Native::test(ThriftyCameraFixtureScreen::class)
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/v.jpg', 'source' => 'video', 'width' => 960, 'height' => 540, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => 0.35, 'runId' => 'run-9',
+        ])
+        ->emitNative(VideoFramesExtracted::class, ['count' => 1, 'runId' => 'run-9'])
+        ->emitNative(VideoFramesExtracted::class, ['count' => 0])
+        ->assertSet('frames', [
+            ['path' => '/frames/v.jpg', 'source' => 'video', 'width' => 960, 'height' => 540, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => 0.35, 'runId' => 'run-9'],
+        ])
+        ->assertSet('extractions', [['count' => 1, 'runId' => 'run-9'], ['count' => 0, 'runId' => null]]);
+});
+
+it('keeps the manifest, the facade and the swift bridge classes in sync', function () {
+    $root = dirname(__DIR__, 3).'/packages/thrifty/camera';
+    $manifest = json_decode(file_get_contents($root.'/nativephp.json'), true);
+    $manifestNames = collect($manifest['bridge_functions'])->pluck('name')->sort()->values()->all();
+
+    $bridge = Native::fakeBridge();
+    ThriftyCamera::snapshot('/tmp');
+    ThriftyCamera::extractVideoFrames('/tmp/v.mov', 2, '/tmp');
+    ThriftyCamera::cancelVideoExtraction('run');
+    ThriftyCamera::importImage('/tmp/i.heic', '/tmp');
+    ThriftyCamera::shutter();
+    ThriftyCamera::deviceTimezone();
+    ThriftyCamera::chime();
+    ThriftyCamera::shareFindCard(['title' => '', 'subtitle' => '', 'imagePath' => '', 'rows' => [], 'summary' => '']);
+
+    $calledNames = collect($bridge->calls)->pluck('method')->unique()->sort()->values()->all();
+    $publicMethods = collect((new ReflectionClass(Thrifty\Camera\ThriftyCamera::class))->getMethods(ReflectionMethod::IS_PUBLIC))
+        ->reject(fn (ReflectionMethod $method) => $method->isConstructor())
+        ->count();
+
+    $swift = collect(glob($root.'/resources/ios/*.swift'))->map(fn (string $file) => file_get_contents($file))->implode("\n");
+
+    expect($calledNames)->toBe($manifestNames)
+        ->and($publicMethods)->toBe(count($manifestNames));
+
+    foreach ($manifest['bridge_functions'] as $function) {
+        [$namespace, $class] = explode('.', $function['ios']);
+
+        expect($namespace)->toBe('ThriftyCameraFunctions')
+            ->and($swift)->toContain("class {$class}: BridgeFunction");
+    }
+
+    foreach ($manifest['events'] as $event) {
+        expect(class_exists($event))->toBeTrue()
+            ->and($swift)->toContain(str_replace('\\', '\\\\', $event));
+    }
 });

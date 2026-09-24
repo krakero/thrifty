@@ -8,5 +8,9 @@ class VideoFramesExtracted
 {
     use Dispatchable;
 
-    public function __construct(public int $count) {}
+    /**
+     * Fired once per extraction on every exit path: the end of the video,
+     * a failure (after CameraFailed) or a cancel.
+     */
+    public function __construct(public int $count, public ?string $runId = null) {}
 }

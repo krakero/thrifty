@@ -21,12 +21,27 @@
         {
             "name": "ThriftyCamera.ExtractVideoFrames",
             "ios": "ThriftyCameraFunctions.ExtractVideoFrames",
-            "description": "Sample a video every N seconds into JPEG frames (async, emits FrameCaptured per frame then VideoFramesExtracted)"
+            "description": "Play a video and sample a frame every N seconds in real time (async, emits FrameCaptured per frame with runId, then VideoFramesExtracted on every exit path)"
+        },
+        {
+            "name": "ThriftyCamera.CancelVideoExtraction",
+            "ios": "ThriftyCameraFunctions.CancelVideoExtraction",
+            "description": "Cancel a running video extraction by runId (it still ends with VideoFramesExtracted)"
         },
         {
             "name": "ThriftyCamera.ImportImage",
             "ios": "ThriftyCameraFunctions.ImportImage",
             "description": "Decode a picked image (HEIC/PNG/JPEG/WebP), apply orientation, downscale to a JPEG frame (async, emits FrameCaptured with source image)"
+        },
+        {
+            "name": "ThriftyCamera.Shutter",
+            "ios": "ThriftyCameraFunctions.Shutter",
+            "description": "Play the snapshot shutter click and a light haptic"
+        },
+        {
+            "name": "ThriftyCamera.DeviceTimezone",
+            "ios": "ThriftyCameraFunctions.DeviceTimezone",
+            "description": "Return the device IANA timezone identifier (synchronous)"
         },
         {
             "name": "ThriftyCamera.Chime",

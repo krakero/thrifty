@@ -621,14 +621,12 @@ it('ignores camera failures from another video run', function () {
         ->assertSee('This video could not be opened.');
 });
 
-it('settles an analysis that failed for a missing key while another screen was active', function () {
+it('does not settle analyses just because the key was cleared after they were sent', function () {
     $component = Native::test(Scan::class)->tap('toggle-live');
     captureFrame($component);
     app(AppSettings::class)->set(AppSettings::OpenAiApiKey, null);
 
-    $component->call('onResume')
-        ->assertSee('0/4')
-        ->assertSee('Add your OpenAI API key in Settings to start scanning.');
+    $component->call('onResume')->assertSee('1/4')->assertDontSee('Add your OpenAI API key');
 });
 
 it('settles results delivered while Settings is on top', function () {
@@ -656,7 +654,7 @@ it('keeps a watchdog-timed-out analysis until its frame run lands, then shows an
         ->assertSee('1/4')
         ->assertDontSee('did not complete');
 
-    expect(scanState()->pending[$taskId]['timedOut'])->toBeTrue();
+    expect(scanState()->pending[$taskId]['timedOutAt'])->toBe(time());
 
     $run = FrameRun::factory()->create(['id' => scanState()->pending[$taskId]['frameRunId'], 'status' => FrameRunStatus::Completed, 'completed_at' => now()]);
     Item::factory()->create(['frame_run_id' => $run->id, 'name' => 'Late lamp']);
@@ -669,7 +667,7 @@ it('keeps a watchdog-timed-out analysis until its frame run lands, then shows an
         ->assertNativeCalled('ThriftyCamera.Chime');
 });
 
-it('catches up on video frames and completion delivered while another screen was on top', function () {
+it('handles video frames and completion delivered while another screen is on top, within the slot limit', function () {
     app(AppSettings::class)->set(AppSettings::MaxConcurrentFrames, '2');
     $picked = pickedTempFile('mov');
     $component = pickMedia(Native::test(Scan::class), $picked, 'video');
@@ -681,14 +679,106 @@ it('catches up on video frames and completion delivered while another screen was
     captureFrame($settings, 'video', 'v3.jpg', $runId);
     $settings->emitNative(VideoFramesExtracted::class, ['count' => 3, 'runId' => $runId]);
 
-    $this->asyncFake->assertNotDispatched();
+    $this->asyncFake->assertDispatchedTimes(2);
+    Storage::disk('local')->assertMissing('frames/v3.jpg');
 
     $component->call('onResume')->assertSee('Paused')->assertSee('2/2');
 
     $this->asyncFake->assertDispatchedTimes(2);
-    Storage::disk('local')->assertMissing('frames/v3.jpg');
     expect(scanState()->videoRunId)->toBeNull()
         ->and(file_exists($picked))->toBeFalse();
+});
+
+it('analyzes only the newest frames of a 90-frame backlog, with one round of feedback', function () {
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    $runId = scanState()->videoRunId;
+    $journal = app(VideoRunJournal::class);
+    $disk = Storage::disk('local');
+
+    foreach (range(1, 90) as $index) {
+        $disk->put("frames/b{$index}.jpg", 'jpeg');
+        $journal->record(new FrameCaptured($disk->path("frames/b{$index}.jpg"), 'video', 960, 540, '2026-09-23T10:00:00Z', $index * 2.0, $runId));
+    }
+
+    $component->call('onResume')->assertSee('4/4');
+
+    $analyzed = array_map(fn (array $dispatch) => $dispatch['work']['args'][1], $this->asyncFake->dispatched);
+    expect($analyzed)->toBe(['frames/b87.jpg', 'frames/b88.jpg', 'frames/b89.jpg', 'frames/b90.jpg'])
+        ->and($disk->files('frames'))->toHaveCount(4)
+        ->and($disk->files('previews'))->toHaveCount(1)
+        ->and($disk->get(scanState()->stillPreviewPath))->toBe('jpeg');
+    $component->assertNativeCalledTimes('ThriftyCamera.Shutter', 1);
+});
+
+it('drops a backlog quietly when every slot is busy, still showing the newest frame', function () {
+    app(AppSettings::class)->set(AppSettings::MaxConcurrentFrames, '1');
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    $runId = scanState()->videoRunId;
+    scanState()->pending['busy'] = ['sessionId' => 's', 'frameRunId' => 'r', 'dispatchedAt' => time()];
+    $disk = Storage::disk('local');
+
+    foreach (range(1, 3) as $index) {
+        $disk->put("frames/b{$index}.jpg", "frame {$index}");
+        app(VideoRunJournal::class)->record(new FrameCaptured($disk->path("frames/b{$index}.jpg"), 'video', 960, 540, '2026-09-23T10:00:00Z', null, $runId));
+    }
+
+    $component->call('onResume')->assertNativeNotCalled('ThriftyCamera.Shutter');
+
+    $this->asyncFake->assertNotDispatched();
+    expect($disk->files('frames'))->toBe([])
+        ->and($disk->get(scanState()->stillPreviewPath))->toBe('frame 3');
+});
+
+it('keeps analyzing video frames while a find is pushed over Scan', function () {
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    $runId = scanState()->videoRunId;
+
+    $settings = Native::test(Settings::class);
+    captureFrame($settings, 'video', 'v1.jpg', $runId);
+    captureFrame($settings, 'video', 'v2.jpg', $runId);
+
+    $this->asyncFake->assertDispatchedTimes(2);
+    $settings->emitNative(VideoFramesExtracted::class, ['count' => 2, 'runId' => $runId]);
+
+    expect(scanState()->videoRunId)->toBeNull()
+        ->and(scanState()->scanning)->toBeFalse();
+
+    $component->call('onResume')->assertSee('Paused')->assertSee('2/4');
+    $this->asyncFake->assertDispatchedTimes(2);
+});
+
+it('ignores a failure from an earlier photo pick and keeps the current import', function () {
+    $first = pickedTempFile('heic');
+    $second = pickedTempFile('heic');
+    $component = pickMedia(Native::test(Scan::class), $first, 'image');
+    pickMedia($component, $second, 'image');
+
+    $component->emitNative(CameraFailed::class, ['message' => 'Photo A could not be read.'])
+        ->assertDontSee('Photo A could not be read.');
+
+    expect(file_exists($first))->toBeFalse()
+        ->and(file_exists($second))->toBeTrue()
+        ->and(scanState()->pendingImports)->toHaveCount(1);
+
+    importedFrame($component, 1, 'second.jpg');
+    $this->asyncFake->assertDispatchedTimes(1);
+});
+
+it('expires a timed-out analysis measured from the timeout, not the dispatch', function () {
+    scanState()->pending['late'] = ['sessionId' => 's', 'frameRunId' => 'late', 'dispatchedAt' => time() - Scan::PendingExpirySeconds - 100, 'timedOutAt' => time() - 60];
+    scanState()->pending['gone'] = ['sessionId' => 's', 'frameRunId' => 'gone', 'dispatchedAt' => time() - 2000, 'timedOutAt' => time() - Scan::PendingExpirySeconds - 1];
+
+    Native::test(Scan::class)->assertSee('1/4');
+
+    expect(array_keys(scanState()->pending))->toBe(['late']);
+});
+
+it('ends sessions with millisecond precision', function () {
+    $this->travelTo(now()->setMicrosecond(123456));
+
+    Native::test(Scan::class)->tap('toggle-live')->call('turnCameraOff');
+
+    expect(ScanSession::sole()->ended_at->format('v'))->toBe('123');
 });
 
 it('ignores results for analyses it is not waiting on', function () {

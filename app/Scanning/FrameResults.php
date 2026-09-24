@@ -33,7 +33,7 @@ class FrameResults
         }
 
         if ($status !== 'finished' && $this->isWatchdogTimeout($exceptionClass, $message)) {
-            $this->state->pending[$id]['timedOut'] = true;
+            $this->state->pending[$id]['timedOutAt'] = time();
 
             return;
         }

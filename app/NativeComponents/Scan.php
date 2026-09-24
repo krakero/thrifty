@@ -10,10 +10,13 @@ use App\Models\AppStat;
 use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ScanSession;
+use App\Scanning\FrameDispatcher;
 use App\Scanning\FrameFiles;
 use App\Scanning\FrameResults;
 use App\Scanning\LiveScanState;
 use App\Scanning\ReceivesFrameAnalyses;
+use App\Scanning\Stage;
+use App\Scanning\VideoRunDrainer;
 use App\Services\AppSettings;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -62,13 +65,14 @@ class Scan extends NativeComponent
     {
         $state = $this->state();
         app(FrameFiles::class)->sweep(array_filter([$state->stillPreviewPath]), array_keys($state->pendingImports));
-        $this->drainVideoRun();
+        app(VideoRunDrainer::class)->listenGlobally();
+        app(VideoRunDrainer::class)->drain();
         $this->reconcile(settleRecent: true);
     }
 
     public function onResume(): void
     {
-        $this->drainVideoRun();
+        app(VideoRunDrainer::class)->drain();
         $this->reconcile(settleRecent: true);
     }
 
@@ -196,7 +200,7 @@ class Scan extends NativeComponent
         }
 
         if ($source === 'image') {
-            $this->showStill($framePath);
+            app(Stage::class)->show($framePath);
         }
 
         if ($this->atCapacity()) {
@@ -209,10 +213,8 @@ class Scan extends NativeComponent
             return;
         }
 
-        $state->flashAt = microtime(true);
-        ThriftyCamera::shutter();
-
-        $this->analyze($state->sessionId, $framePath, $capturedAt);
+        app(FrameDispatcher::class)->captureFeedback();
+        app(FrameDispatcher::class)->analyze($state->sessionId, $framePath, $capturedAt);
     }
 
     /**
@@ -225,7 +227,8 @@ class Scan extends NativeComponent
     }
 
     /**
-     * Failures from an earlier (cancelled or replaced) video run are ignored.
+     * Failures from an earlier (cancelled or replaced) video run are ignored, and so are photo import failures
+     * that belong to an earlier pick.
      */
     #[On(CameraFailed::class)]
     public function cameraFailed(string $message, ?string $runId = null): void
@@ -238,11 +241,15 @@ class Scan extends NativeComponent
             return;
         }
 
+        if ($state->source === ScanSource::Image->value) {
+            $this->photoImportFailed($message);
+
+            return;
+        }
+
         $state->snapshotDueAt = 0.0;
 
-        if ($state->source === ScanSource::Image->value && $state->pendingImports !== []) {
-            $this->abandonImports($state->sessionId);
-        } elseif ($state->videoRunId === null) {
+        if ($state->videoRunId === null) {
             $state->scanning = false;
         }
 
@@ -315,7 +322,7 @@ class Scan extends NativeComponent
 
     private function atCapacity(): bool
     {
-        return $this->state()->inFlight() >= app(AppSettings::class)->maxConcurrentFrames();
+        return app(FrameDispatcher::class)->atCapacity();
     }
 
     /**
@@ -378,7 +385,7 @@ class Scan extends NativeComponent
         $state->scanning = false;
         $state->snapshotDueAt = 0.0;
         $this->cancelVideo();
-        $this->clearStill();
+        app(Stage::class)->clear();
     }
 
     private function cancelVideo(): void
@@ -418,7 +425,8 @@ class Scan extends NativeComponent
         $state = $this->state();
 
         if ($state->sessionId !== null) {
-            ScanSession::query()->whereKey($state->sessionId)->whereNull('ended_at')->update(['ended_at' => now()]);
+            // Through the model, so ended_at keeps the model's millisecond date format.
+            ScanSession::query()->whereKey($state->sessionId)->whereNull('ended_at')->first()?->update(['ended_at' => now()]);
         }
 
         $state->sessionId = null;
@@ -485,6 +493,30 @@ class Scan extends NativeComponent
         }
     }
 
+    /**
+     * The plugin reports a failed photo import without saying which pick it was. Imports finish in the order they
+     * were picked, so the failure belongs to the oldest one still outstanding; it's shown only when that pick is the
+     * current one, and a later pick is left to finish.
+     */
+    private function photoImportFailed(string $message): void
+    {
+        $state = $this->state();
+        $token = array_key_first($state->pendingImports);
+
+        if ($token === null) {
+            return;
+        }
+
+        $import = $state->pendingImports[$token];
+        app(FrameFiles::class)->deletePicked($import['pickedPath']);
+        app(FrameFiles::class)->deleteImportDirectory($token);
+        unset($state->pendingImports[$token]);
+
+        if ($import['sessionId'] === $state->sessionId) {
+            $state->fail($message);
+        }
+    }
+
     private function loadVideo(string $absolutePath): void
     {
         $this->stopMedia();
@@ -503,14 +535,12 @@ class Scan extends NativeComponent
     }
 
     /**
-     * A video run's events reach whichever screen is active, and the plugin journals them per run, so Scan
-     * consumes the current run from the journal rather than from the event itself. That way frames and the final
-     * VideoFramesExtracted that arrived while a find or Settings was on top are caught up on, in order.
+     * Video events for the current run are consumed from the plugin's journal (see {@see VideoRunDrainer}).
      */
     private function videoEventArrived(?string $runId, ?string $framePath = null): void
     {
         if ($runId !== null && $runId === $this->state()->videoRunId) {
-            $this->drainVideoRun();
+            app(VideoRunDrainer::class)->drain();
 
             return;
         }
@@ -523,83 +553,6 @@ class Scan extends NativeComponent
         if ($runId !== null) {
             ThriftyCamera::forgetVideoRun($runId);
         }
-    }
-
-    private function drainVideoRun(): void
-    {
-        $runId = $this->state()->videoRunId;
-
-        if ($runId === null) {
-            return;
-        }
-
-        foreach (ThriftyCamera::takeVideoEvents($runId) as $event) {
-            match (true) {
-                $event instanceof FrameCaptured => $this->acceptVideoFrame($event),
-                $event instanceof CameraFailed => $this->state()->fail($event->message),
-                $event instanceof VideoFramesExtracted => $this->finishVideoRun($event->count),
-            };
-        }
-    }
-
-    /**
-     * Video frames follow the live-frame rules: shown on the stage, dropped at capacity, with the shutter and flash.
-     */
-    private function acceptVideoFrame(FrameCaptured $event): void
-    {
-        $state = $this->state();
-        $files = app(FrameFiles::class);
-        $framePath = FrameFiles::relativePath($event->path);
-
-        if ($state->sessionId === null || $state->source !== ScanSource::Video->value) {
-            $files->delete($framePath);
-
-            return;
-        }
-
-        $this->showStill($framePath);
-
-        if ($this->atCapacity()) {
-            $files->delete($framePath);
-
-            return;
-        }
-
-        $state->flashAt = microtime(true);
-        ThriftyCamera::shutter();
-
-        $this->analyze($state->sessionId, $framePath, $event->capturedAt);
-    }
-
-    private function finishVideoRun(int $count): void
-    {
-        $state = $this->state();
-        $state->videoRunId = null;
-        $state->scanning = false;
-        app(FrameFiles::class)->deletePicked($state->pickedMediaPath);
-        $state->pickedMediaPath = null;
-
-        if ($count === 0 && $state->error === null) {
-            $state->fail('No frames could be read from this video.');
-        }
-    }
-
-    private function showStill(string $framePath): void
-    {
-        $state = $this->state();
-        $previous = $state->stillPreviewPath;
-        $state->stillPreviewPath = app(FrameFiles::class)->copyToPreview($framePath) ?? $previous;
-
-        if ($previous !== $state->stillPreviewPath) {
-            app(FrameFiles::class)->delete($previous);
-        }
-    }
-
-    private function clearStill(): void
-    {
-        $state = $this->state();
-        app(FrameFiles::class)->delete($state->stillPreviewPath);
-        $state->stillPreviewPath = null;
     }
 
     private function takeDueSnapshot(float $now): void
@@ -618,45 +571,16 @@ class Scan extends NativeComponent
     }
 
     /**
-     * Without an API key every analysis fails before it records anything, so fail here instead of dispatching.
-     */
-    private function analyze(string $sessionId, string $framePath, string $capturedAt): void
-    {
-        $state = $this->state();
-        $settings = app(AppSettings::class);
-
-        if ($settings->openAiApiKey() === null) {
-            app(FrameFiles::class)->delete($framePath);
-            $state->fail((new MissingApiKey)->getMessage(), needsApiKey: true);
-
-            return;
-        }
-
-        $frameRunId = (string) Str::ulid();
-        $task = AnalyzeFrame::dispatch(
-            $sessionId,
-            $framePath,
-            $capturedAt,
-            $frameRunId,
-            (string) $settings->get(AppSettings::FindCriteria, ''),
-        )->shared(self::FrameAnalyzedEvent);
-
-        $state->pending[$task->getId()] = ['sessionId' => $sessionId, 'frameRunId' => $frameRunId, 'dispatchedAt' => time()];
-
-        if (! $task->start()) {
-            unset($state->pending[$task->getId()]);
-            $state->fail('Frame analysis could not be started.');
-        }
-    }
-
-    /**
+     * Settle analyses whose shared result never reached Scan    /**
      * Settle analyses whose shared result never reached Scan, by their FrameRun.
      *
      * The agent saves the FrameRun under the pre-generated id on success and on every failure except a missing API
-     * key, so a run row means the analysis is over, and no run while no key is saved means it failed for that.
+     * key, so a run row means the analysis is over. (Scan never dispatches without a key, and a MissingApiKey result
+     * is settled by whichever screen receives it, see {@see ReceivesFrameAnalyses}.)
      * While Scan is showing (`$settleRecent` false) a just-finished run is left for its shared event, which is
      * moments away and also plays the chime; a watchdog-timed-out entry gets no such event, so it settles at once
-     * and chimes here. Anything that never reports back is dropped once it has outlived the task's watchdog.
+     * and chimes here. Anything that never reports back is dropped once it has outlived the task's watchdog, or, for
+     * a timed-out entry, the same span again from the moment it timed out.
      */
     private function reconcile(bool $settleRecent): void
     {
@@ -672,18 +596,14 @@ class Scan extends NativeComponent
             ->get()
             ->keyBy('id');
         $graceCutoff = now()->subSeconds(self::SettleGraceSeconds);
-        $keyMissing = app(AppSettings::class)->openAiApiKey() === null;
         $results = app(FrameResults::class);
 
         foreach ($state->pending as $taskId => $entry) {
             $run = $runs->get($entry['frameRunId']);
-            $timedOut = $entry['timedOut'] ?? false;
+            $timedOut = isset($entry['timedOutAt']);
 
             if ($run === null) {
-                if ($keyMissing && ! $timedOut) {
-                    unset($state->pending[$taskId]);
-                    $state->fail((new MissingApiKey)->getMessage(), needsApiKey: true);
-                } elseif (time() - $entry['dispatchedAt'] > self::PendingExpirySeconds) {
+                if (time() - ($entry['timedOutAt'] ?? $entry['dispatchedAt']) > self::PendingExpirySeconds) {
                     unset($state->pending[$taskId]);
                 }
 

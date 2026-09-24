@@ -57,9 +57,9 @@ class LiveScanState
     /**
      * Analyses in flight, keyed by async task id.
      *
-     * `timedOut` marks an analysis the vendor watchdog gave up on; it still finishes and is settled from its FrameRun.
+     * `timedOutAt` marks an analysis the vendor watchdog gave up on; it still finishes and is settled from its FrameRun.
      *
-     * @var array<string, array{sessionId: string, frameRunId: string, dispatchedAt: int, timedOut?: bool}>
+     * @var array<string, array{sessionId: string, frameRunId: string, dispatchedAt: int, timedOutAt?: int}>
      */
     public array $pending = [];
 
@@ -78,6 +78,9 @@ class LiveScanState
     public float $lastReconcileAt = 0.0;
 
     public float $flashAt = 0.0;
+
+    /** Whether the app-lifetime listener that drains video runs during pushes is registered. */
+    public bool $drainsVideoGlobally = false;
 
     public ?string $error = null;
 

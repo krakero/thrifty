@@ -53,7 +53,7 @@
                             >
                                 <text class="text-[11] uppercase text-theme-on-surface-variant" :max-lines="1">{{ $frameItem->category }}</text>
                                 <text font="semibold" class="text-sm text-theme-on-surface" :max-lines="1">{{ $frameItem->name }}</text>
-                                <text font="mono" class="text-sm text-theme-accent" :max-lines="1">{{ PriceText::keepTogether(Money::resaleRange($frameItem)) }}</text>
+                                <text font="mono" class="text-sm text-theme-accent">{{ PriceText::keepTogether(Money::resaleRange($frameItem)) }}</text>
                             </thrifty-pressable>
                         @endforeach
                     </row>
@@ -73,7 +73,7 @@
                 <text font="display" class="text-2xl text-theme-on-background">{{ $item->name }}</text>
                 <row class="w-full items-center gap-2">
                     @if ($item->isRepeat())
-                        <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 py-1 text-xs text-theme-primary" :max-lines="1">{{ PriceText::keepTogether('Seen '.$item->seen_count.'×') }}</text>
+                        <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 py-1 text-xs text-theme-primary">{{ PriceText::keepTogether('Seen '.$item->seen_count.'×') }}</text>
                     @endif
                     <text class="rounded-full bg-theme-surface-variant px-2 py-1 text-xs text-theme-on-surface">{{ $item->condition }}</text>
                 </row>
@@ -86,14 +86,14 @@
                 @endphp
                 <column class="w-full gap-1 rounded-xl bg-theme-accent/15 p-3">
                     <text class="text-[11] uppercase text-theme-accent" :max-lines="1">{{ $resale['label'] }}</text>
-                    <text font="mono" class="text-2xl text-theme-accent" :max-lines="1">{{ PriceText::keepTogether($resale['value']) }}</text>
+                    <text font="mono" class="text-2xl text-theme-accent">{{ PriceText::keepTogether($resale['value']) }}</text>
                 </column>
                 @foreach (array_chunk([$tag, ...array_slice($priceRows, 2)], 2) as $pair)
                     <row class="w-full gap-3">
                         @foreach ($pair as $row)
                             <column class="flex-1 gap-1 rounded-xl p-3 {{ $row['tone'] === 'primary' ? 'bg-theme-primary/15' : 'bg-theme-surface-variant' }}">
                                 <text class="text-[11] uppercase {{ $row['tone'] === 'primary' ? 'text-theme-primary' : 'text-theme-on-surface-variant' }}" :max-lines="1">{{ $row['label'] }}</text>
-                                <text font="mono" class="text-base {{ $row['tone'] === 'primary' ? 'text-theme-primary' : 'text-theme-on-surface' }}" :max-lines="1">{{ PriceText::keepTogether($row['value']) }}</text>
+                                <text font="mono" class="text-base {{ $row['tone'] === 'primary' ? 'text-theme-primary' : 'text-theme-on-surface' }}">{{ PriceText::keepTogether($row['value']) }}</text>
                             </column>
                         @endforeach
                     </row>
@@ -145,10 +145,9 @@
                     @if (! $loop->first)
                         <divider class="border-theme-outline" />
                     @endif
-                    <row class="w-full items-center gap-3 py-2">
-                        <text class="text-sm text-theme-on-surface-variant">{{ $label }}</text>
-                        <spacer />
-                        <text class="text-sm text-theme-on-surface text-right" :max-lines="1">{{ $value }}</text>
+                    <row class="w-full items-start gap-3 py-2">
+                        <text class="text-sm text-theme-on-surface-variant" :max-lines="1">{{ $label }}</text>
+                        <text class="flex-1 text-sm text-theme-on-surface text-right">{{ $value }}</text>
                     </row>
                 @endforeach
             </column>

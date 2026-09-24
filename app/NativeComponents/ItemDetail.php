@@ -48,6 +48,14 @@ class ItemDetail extends NativeComponent
     public ?string $error = null;
 
     /**
+     * The frame chips' order, fixed when the screen opens (the opened find first, so it starts in view). Selecting
+     * another find never re-orders the row, so chips don't shuffle under the finger.
+     *
+     * @var list<string>
+     */
+    public array $chipOrder = [];
+
+    /**
      * Query results for the current render, keyed by item id then by name.
      *
      * @var array<string, array<string, mixed>>
@@ -58,6 +66,9 @@ class ItemDetail extends NativeComponent
     {
         $this->itemId = (string) $this->param('id');
         $this->from = $this->data('from') === 'scan' ? 'scan' : 'history';
+        $this->chipOrder = $this->frameItems()
+            ->sortBy(fn (Item $frameItem): int => $frameItem->id === $this->itemId ? 0 : 1)
+            ->modelKeys();
     }
 
     public function navTitle(): string
@@ -220,7 +231,7 @@ class ItemDetail extends NativeComponent
             'frameItems' => $frameItems,
             'frame' => $this->frameImage($item),
             'priceRows' => $this->priceRows($item),
-            'frameChips' => $frameItems->sortBy(fn (Item $frameItem): int => $frameItem->id === $item->id ? 0 : 1)->values(),
+            'frameChips' => $this->frameChips($frameItems),
             'evidence' => $this->marketEvidence(),
             'summary' => $this->plainSummary($item),
             'confidence' => $this->confidence($item),
@@ -263,6 +274,19 @@ class ItemDetail extends NativeComponent
         $ratios = self::boxRatios($box);
 
         return $ratios['width'] * $ratios['height'];
+    }
+
+    /**
+     * @param  Collection<int, Item>  $frameItems
+     * @return Collection<int, Item>
+     */
+    private function frameChips(Collection $frameItems): Collection
+    {
+        $position = array_flip($this->chipOrder);
+
+        return $frameItems
+            ->sortBy(fn (Item $frameItem, int $index): int => $position[$frameItem->id] ?? count($position) + $index)
+            ->values();
     }
 
     private function item(): ?Item

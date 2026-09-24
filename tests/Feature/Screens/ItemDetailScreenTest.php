@@ -354,3 +354,29 @@ it('stacks boxes largest first so smaller boxes stay tappable, even under a sele
         ->tap("box-{$chair->id}")
         ->assertSet('itemId', $chair->id);
 });
+
+it('keeps the frame chips in a fixed order, opened find first, when another find is selected', function () {
+    [$run, $lamp, $chair] = frameWithTwoFinds();
+    $third = Item::factory()->for($run)->create(['last_seen_at' => '2026-09-16 16:31:00']);
+
+    $chipOrder = function ($screen): array {
+        $refs = [];
+        $walk = function (array $node) use (&$walk, &$refs): void {
+            if (str_starts_with($node['ref'] ?? '', 'frame-item-')) {
+                $refs[] = substr($node['ref'], strlen('frame-item-'));
+            }
+            foreach ($node['children'] ?? [] as $child) {
+                $walk($child);
+            }
+        };
+        $walk($screen->tree());
+
+        return $refs;
+    };
+
+    $screen = itemDetail($chair);
+    expect($chipOrder($screen))->toBe([$chair->id, $third->id, $lamp->id]);
+
+    $screen->tap("frame-item-{$lamp->id}")->assertSet('itemId', $lamp->id);
+    expect($chipOrder($screen))->toBe([$chair->id, $third->id, $lamp->id]);
+});

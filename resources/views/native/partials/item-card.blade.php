@@ -14,11 +14,12 @@
 @php($from ??= 'history')
 
 <thrifty-pressable
+    native:key="item-card-{{ $item->id }}"
     ref="item-card-{{ $item->id }}"
     @navigate="'/finds/'.$item->id.'?from='.$from, ['from' => $from]"
     a11y-label="{{ $item->name }}, resale {{ Money::resaleRange($item) }}"
     a11y-hint="Opens the find details"
-    class="w-full gap-3 rounded-2xl bg-theme-surface border border-theme-outline p-3"
+    class="w-full gap-2 rounded-2xl bg-theme-surface border border-theme-outline p-3"
 >
     <row class="w-full gap-3">
         <stack class="w-[88] h-[88] rounded-xl bg-theme-surface-variant">
@@ -32,7 +33,7 @@
             <row class="w-full items-center gap-2">
                 <text class="flex-1 text-xs uppercase text-theme-on-surface-variant" :max-lines="1">{{ $item->category }}</text>
                 @if ($item->isRepeat())
-                    <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 text-[11] text-theme-primary" :max-lines="1">{{ PriceText::keepTogether('Seen '.$item->seen_count.'×') }}</text>
+                    <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 text-[11] text-theme-primary">{{ PriceText::keepTogether('Seen '.$item->seen_count.'×') }}</text>
                 @endif
                 @unless ($showCapturedAt)
                     <text class="text-xs text-theme-on-surface-variant" :max-lines="1">{{ $item->first_seen_at->diffForHumans() }}</text>
@@ -52,20 +53,23 @@
         </column>
     </row>
 
-    {{-- Full card width so ranges and prices stay on one line (they never break mid-number, only truncate at extreme sizes). --}}
+    {{--
+        Prices get the full card width, the resale range on its own row, so they stay on one line at normal sizes. At the
+        largest text sizes they wrap rather than truncate: a value is never hidden.
+    --}}
+    <column class="w-full rounded-lg bg-theme-accent/15 px-2 py-1">
+        <text class="text-[10] uppercase text-theme-accent" :max-lines="1">Resale</text>
+        <text font="mono" class="text-sm text-theme-accent">{{ PriceText::keepTogether(Money::resaleRange($item)) }}</text>
+    </column>
     <row class="w-full items-center gap-2">
-        <column class="flex-1 rounded-lg bg-theme-accent/15 px-2 py-1">
-            <text class="text-[10] uppercase text-theme-accent" :max-lines="1">Resale</text>
-            <text font="mono" class="text-sm text-theme-accent" :max-lines="1">{{ PriceText::keepTogether(Money::resaleRange($item)) }}</text>
-        </column>
-        <column class="rounded-lg bg-theme-surface-variant px-2 py-1">
+        <column class="flex-1 rounded-lg bg-theme-surface-variant px-2 py-1">
             <text class="text-[10] uppercase text-theme-on-surface-variant" :max-lines="1">Retail</text>
-            <text font="mono" class="text-sm text-theme-on-surface" :max-lines="1">{{ Money::format($item->retail_price_cents, $item->currency) }}</text>
+            <text font="mono" class="text-sm text-theme-on-surface">{{ Money::format($item->retail_price_cents, $item->currency) }}</text>
         </column>
         @if ($item->observed_price_cents !== null)
-            <column class="rounded-lg bg-theme-primary px-2 py-1">
+            <column class="flex-1 rounded-lg bg-theme-primary px-2 py-1">
                 <text class="text-[10] uppercase text-theme-on-primary" :max-lines="1">Tag</text>
-                <text font="mono" class="text-sm text-theme-on-primary" :max-lines="1">{{ Money::format($item->observed_price_cents, $item->currency) }}</text>
+                <text font="mono" class="text-sm text-theme-on-primary">{{ Money::format($item->observed_price_cents, $item->currency) }}</text>
             </column>
         @endif
     </row>

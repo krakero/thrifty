@@ -43,7 +43,7 @@
         </row>
     </column>
 
-    <refreshable @refresh="refresh" class="w-full flex-1 bg-theme-background">
+    <refreshable native:key="history-list" @refresh="refresh" class="w-full flex-1 bg-theme-background">
         <column class="w-full gap-4 px-4 pt-1 pb-8">
             <row
                 ref="history-stats"
@@ -63,7 +63,9 @@
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface py-2">{{ $scanError }}</text>
                     @if ($scanErrorNeedsApiKey)
-                        <button ref="scan-error-settings" variant="secondary" size="lg" @press="openSettings">Settings</button>
+                        <thrifty-pressable ref="scan-error-settings" @press="openSettings" a11y-label="Open Settings" class="shrink-0 min-h-[44] justify-center rounded-full bg-theme-destructive px-3">
+                            <text font="semibold" :max-lines="1" class="text-xs text-theme-on-destructive">Settings</text>
+                        </thrifty-pressable>
                     @endif
                     <thrifty-pressable ref="dismiss-scan-error" @press="dismissScanError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
@@ -75,7 +77,9 @@
                 <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 pl-3 py-1">
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface py-2">{{ $error }}</text>
-                    <button ref="retry-history" variant="secondary" size="lg" @press="retry">Retry</button>
+                    <thrifty-pressable ref="retry-history" @press="retry" a11y-label="Retry loading finds" class="shrink-0 min-h-[44] justify-center rounded-full bg-theme-destructive px-3">
+                        <text font="semibold" :max-lines="1" class="text-xs text-theme-on-destructive">Retry</text>
+                    </thrifty-pressable>
                     <thrifty-pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
                     </thrifty-pressable>

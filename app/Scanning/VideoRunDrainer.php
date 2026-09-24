@@ -139,7 +139,6 @@ class VideoRunDrainer
 
     /**
      * Apply a changed scan interval to the running video, as the web's `changeScanInterval` does while scanning.
-     * Needs the plugin's `setVideoFrameInterval` bridge; without it the new interval applies from the next video.
      */
     public function syncInterval(int $seconds): void
     {
@@ -149,11 +148,7 @@ class VideoRunDrainer
             return;
         }
 
-        $camera = ThriftyCamera::getFacadeRoot();
-
-        if (method_exists($camera, 'setVideoFrameInterval')) {
-            $camera->setVideoFrameInterval($runId, $seconds);
-            $this->state->videoIntervalSeconds = $seconds;
-        }
+        ThriftyCamera::setVideoFrameInterval($runId, $seconds);
+        $this->state->videoIntervalSeconds = $seconds;
     }
 }

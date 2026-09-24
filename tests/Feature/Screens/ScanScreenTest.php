@@ -421,7 +421,7 @@ it('offers settings on a rejected key and clears key errors on return once the k
     $component = goLive(Native::test(Scan::class));
     captureFrame($component);
     failAnalysis($component, AnalysisFailed::class, 'OpenAI rejected your API key. Check it in Settings.')
-        ->assertElement('button', fn (array $node) => ($node['ref'] ?? null) === 'error-open-settings');
+        ->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === 'error-open-settings');
 
     $component->call('onResume')->assertSee('OpenAI rejected your API key');
 
@@ -963,13 +963,15 @@ it('applies a changed scan interval to the running video on return from Settings
     expect($camera->intervals)->toBe([[$runId, 7]]);
 });
 
-it('keeps the running video at its interval when the plugin cannot change it', function () {
+it('sends a changed interval for the running video over the bridge', function () {
     $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    $runId = scanState()->videoRunId;
     app(AppSettings::class)->set(AppSettings::ScanIntervalSeconds, '7');
 
-    $component->call('onResume');
+    $component->call('onResume')
+        ->assertNativeCalled('ThriftyCamera.SetVideoFrameInterval', fn (array $params) => $params === ['runId' => $runId, 'intervalSeconds' => 7]);
 
-    expect(scanState()->videoIntervalSeconds)->toBe(AppSettings::DefaultScanIntervalSeconds);
+    expect(scanState()->videoIntervalSeconds)->toBe(7);
 });
 
 it('sweeps picked gallery copies left behind by an earlier run', function () {
@@ -996,6 +998,18 @@ it('offers the iOS Settings app when camera access is off', function () {
         ->emitNative(CameraFailed::class, ['message' => 'Camera access is off — enable it in Settings.'])
         ->tap('error-open-ios-settings')
         ->assertNativeCalled('System.OpenAppSettings');
+});
+
+it('labels the camera menu and the dock controls for VoiceOver', function () {
+    $component = Native::test(Scan::class);
+    $labelled = fn (string $ref, string $label) => $component->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === $ref
+        && ($node['props']['a11y_label'] ?? null) === $label);
+
+    $labelled('camera-select', 'Camera: Camera off');
+    $labelled('toggle-live', 'Start live scanning');
+    $labelled('snapshot', 'Take snapshot');
+    $labelled('upload', 'Upload a photo or video');
+    $component->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === 'camera-select' && ($node['props']['has_menu'] ?? false));
 });
 
 it('ignores results for analyses it is not waiting on', function () {

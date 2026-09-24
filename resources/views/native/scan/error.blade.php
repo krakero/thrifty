@@ -6,10 +6,14 @@
         <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Error" :size="16" class="text-theme-on-destructive" />
         <text class="flex-1 text-sm text-theme-on-destructive">{{ $state->error }}</text>
         @if ($state->errorNeedsCameraPermission)
-            <button ref="error-open-ios-settings" variant="secondary" size="sm" label="iOS Settings" a11y-label="Open iOS Settings for Thrifty" a11y-hint="Turn on camera access there" @press="openAppSettings" class="min-h-[44]" />
+            <thrifty-pressable ref="error-open-ios-settings" @press="openAppSettings" a11y-label="Open iOS Settings for Thrifty" a11y-hint="Turn on camera access there" class="shrink-0 min-h-[44] justify-center rounded-full bg-theme-on-destructive px-3">
+                <text font="semibold" :max-lines="1" class="text-xs text-theme-destructive">iOS Settings</text>
+            </thrifty-pressable>
         @endif
         @if ($state->errorNeedsApiKey)
-            <button ref="error-open-settings" variant="secondary" size="sm" label="Settings" a11y-label="Open Settings" @press="openSettings" class="min-h-[44]" />
+            <thrifty-pressable ref="error-open-settings" @press="openSettings" a11y-label="Open Settings" class="shrink-0 min-h-[44] justify-center rounded-full bg-theme-on-destructive px-3">
+                <text font="semibold" :max-lines="1" class="text-xs text-theme-destructive">Settings</text>
+            </thrifty-pressable>
         @endif
         <icon
             ref="dismiss-error"

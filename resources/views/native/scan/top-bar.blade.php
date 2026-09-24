@@ -15,16 +15,13 @@
 @endphp
 
 <row native:key="scan-top-bar" class="w-full items-center gap-2 px-4 pt-3 pb-2">
-    {{-- A real button (not a pressable) so VoiceOver gets a labelled button; the menu marks the current camera. --}}
-    <button
+    {{--
+        thrifty-pressable puts the VoiceOver label and button trait on the menu itself (a theme button with :menu
+        leaves the menu unlabelled) and keeps the label light on the dark pill. 44pt tall.
+    --}}
+    <thrifty-pressable
         ref="camera-select"
         native:key="camera-select"
-        variant="secondary"
-        size="sm"
-        class="glass"
-        icon="{{ Ios::Camera->value }}"
-        icon-trailing="{{ Ios::ChevronDown->value }}"
-        label="{{ $cameraLabel }}"
         a11y-label="Camera: {{ $cameraLabel }}"
         a11y-hint="Chooses the back camera, the front camera, or turns the camera off"
         :menu="[
@@ -33,7 +30,14 @@
             NavAction::divider(),
             $cameraChoice('camera-off', 'Camera off', LiveScanState::FacingOff, Ios::Xmark, Android::NoPhotography, 'turnCameraOff'),
         ]"
-    />
+        class="shrink-0 min-h-[44] justify-center rounded-full bg-theme-background/80 border border-theme-outline px-3"
+    >
+        <row class="items-center gap-1">
+            <icon :ios="Ios::Camera" :android="Android::PhotoCamera" :size="14" class="text-theme-on-surface" />
+            <text font="semibold" :max-lines="1" class="text-sm text-theme-on-surface">{{ $cameraLabel }}</text>
+            <icon :ios="Ios::ChevronDown" :android="Android::ExpandMore" :size="10" class="text-theme-on-surface-variant" />
+        </row>
+    </thrifty-pressable>
 
     <spacer />
 

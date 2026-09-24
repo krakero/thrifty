@@ -25,14 +25,14 @@
         @else
             <icon :ios="Ios::Gauge" :android="Android::Speed" :size="12" a11y-label="{{ $summary }}" class="text-theme-on-surface-variant" />
         @endif
-        <row class="items-baseline gap-1">
+        <row class="items-end gap-1">
             <text font="mono" :max-lines="1" class="text-[13] text-theme-on-surface">{{ $state->inFlight() }}/{{ $maxConcurrentFrames }}</text>
-            <text :max-lines="1" class="text-[9] uppercase text-theme-on-surface-variant">Active</text>
+            <text :max-lines="1" class="pb-[1] text-[9] uppercase text-theme-on-surface-variant">Active</text>
         </row>
         @foreach ($counters as $label => $value)
-            <row class="items-baseline gap-1">
+            <row class="items-end gap-1">
                 <text font="mono" :max-lines="1" class="text-[13] text-theme-on-surface">{{ CompactNumber::format($value) }}</text>
-                <text :max-lines="1" class="text-[9] uppercase text-theme-on-surface-variant">{{ $label }}</text>
+                <text :max-lines="1" class="pb-[1] text-[9] uppercase text-theme-on-surface-variant">{{ $label }}</text>
             </row>
         @endforeach
     </row>

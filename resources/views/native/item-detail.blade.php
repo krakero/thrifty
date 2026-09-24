@@ -28,9 +28,9 @@
                 <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 p-3">
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface">{{ $error }}</text>
-                    <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
+                    <thrifty-pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
-                    </pressable>
+                    </thrifty-pressable>
                 </row>
             @endif
 
@@ -44,7 +44,7 @@
                             @php
                                 $isActive = $frameItem->id === $item->id;
                             @endphp
-                            <pressable
+                            <thrifty-pressable
                                 ref="frame-item-{{ $frameItem->id }}"
                                 @press="selectItem('{{ $frameItem->id }}')"
                                 a11y-label="{{ $frameItem->name }}, resale {{ Money::resaleRange($frameItem) }}"
@@ -54,19 +54,19 @@
                                 <text class="text-[11] uppercase text-theme-on-surface-variant" :max-lines="1">{{ $frameItem->category }}</text>
                                 <text font="semibold" class="text-sm text-theme-on-surface" :max-lines="1">{{ $frameItem->name }}</text>
                                 <text font="mono" class="text-sm text-theme-accent" :max-lines="1">{{ PriceText::keepTogether(Money::resaleRange($frameItem)) }}</text>
-                            </pressable>
+                            </thrifty-pressable>
                         @endforeach
                     </row>
                 </scroll-view>
             </column>
 
-            <pressable ref="agent-activity" @press="openActivity" a11y-label="Agent activity" a11y-hint="Shows what the agent did to value this frame" class="w-full rounded-xl bg-theme-surface border border-theme-outline px-4 py-3">
+            <thrifty-pressable ref="agent-activity" @press="openActivity" a11y-label="Agent activity" a11y-hint="Shows what the agent did to value this frame" class="w-full rounded-xl bg-theme-surface border border-theme-outline px-4 py-3">
                 <row class="w-full items-center gap-3">
                     <icon :ios="Ios::Cpu" :android="Android::SmartToy" :size="18" class="text-theme-primary" />
                     <text font="semibold" class="flex-1 text-sm text-theme-on-surface">Agent activity</text>
                     <icon :ios="Ios::ChevronRight" :android="Android::ChevronRight" :size="14" class="text-theme-on-surface-variant" />
                 </row>
-            </pressable>
+            </thrifty-pressable>
 
             <column class="w-full gap-2">
                 <text font="semibold" class="text-xs uppercase tracking-widest text-theme-on-surface-variant">{{ $item->category }} · {{ $confidence }} confidence</text>
@@ -115,7 +115,7 @@
                             };
                         @endphp
                         @if ($comparable['url'] !== null)
-                            <pressable
+                            <thrifty-pressable
                                 ref="source-{{ $index }}"
                                 @press="openSource({{ $index }})"
                                 a11y-label="{{ $comparable['type'] }}: {{ $comparable['title'] }}, {{ $comparable['price'] }}"
@@ -123,7 +123,7 @@
                                 class="w-full rounded-xl bg-theme-surface border border-theme-outline px-3 py-3"
                             >
                                 @include('native.partials.comparable-row', ['comparable' => $comparable, 'typeClass' => $typeClass])
-                            </pressable>
+                            </thrifty-pressable>
                         @else
                             <column ref="source-{{ $index }}" class="w-full rounded-xl bg-theme-surface border border-theme-outline px-3 py-3">
                                 @include('native.partials.comparable-row', ['comparable' => $comparable, 'typeClass' => $typeClass])

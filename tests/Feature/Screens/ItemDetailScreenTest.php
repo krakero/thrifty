@@ -126,7 +126,7 @@ it('draws a box for every find in the frame, split by flex-grow ratios', functio
         'horizontal' => [100.0, 'box:500', 400.0],
     ]);
 
-    $screen->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$chair->id}")
+    $screen->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$chair->id}")
         ->assertElement('column', fn (array $node) => ($node['layout']['flex_grow'] ?? null) === 500.0
             && ($node['children'][0]['style']['border_width'] ?? null) === 4.0
             && ($node['children'][0]['ref'] ?? null) === "box-{$lamp->id}");
@@ -179,7 +179,7 @@ it('falls back to the thumbnail without boxes when the frame is missing', functi
     itemDetail($item)
         ->assertSee('1 item found in this frame')
         ->assertSee('Lonely vase')
-        ->assertMissingElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$item->id}");
+        ->assertMissingElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$item->id}");
 });
 
 it('lists comparables with their type and opens linked ones in the in-app browser', function () {
@@ -201,7 +201,7 @@ it('lists comparables with their type and opens linked ones in the in-app browse
         ->assertSee('a guide')
         ->tap('source-0')
         ->assertNativeCalled('Browser.OpenInApp', fn (array $params) => $params['url'] === 'https://ebay.com/itm/1')
-        ->assertMissingElement('pressable', fn (array $node) => ($node['ref'] ?? null) === 'source-1')
+        ->assertMissingElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === 'source-1')
         ->assertNativeCalledTimes('Browser.OpenInApp', 1)
         ->tap('source-2')
         ->assertNativeCalled('Browser.OpenInApp', fn (array $params) => $params['url'] === 'https://example.com/guide');

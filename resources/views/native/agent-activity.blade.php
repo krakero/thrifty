@@ -60,7 +60,7 @@
                     <text class="text-sm text-theme-on-surface-variant">No agent events were recorded.</text>
                 @endif
                 <column class="w-full rounded-xl bg-theme-surface border border-theme-outline">
-                    <pressable
+                    <thrifty-pressable
                         ref="audit-{{ $block['key'] }}"
                         @press="toggle('{{ $block['key'] }}')"
                         a11y-label="{{ $block['title'] }}"
@@ -79,7 +79,7 @@
                                 class="text-theme-on-surface-variant"
                             />
                         </row>
-                    </pressable>
+                    </thrifty-pressable>
                     @if ($block['open'])
                         <column class="w-full px-3 pb-3">
                             <text font="mono" :text="$block['body']" class="w-full rounded-lg bg-theme-background p-3 text-xs leading-snug text-theme-on-surface whitespace-pre-wrap select-text" />

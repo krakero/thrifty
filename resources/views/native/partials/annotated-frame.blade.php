@@ -42,7 +42,7 @@
                     <column class="h-full" :flexGrow="$box['left']" :flexShrink="1" />
                 @endif
                 <column class="h-full" :flexGrow="$box['width']" :flexShrink="1">
-                    <pressable
+                    <thrifty-pressable
                         ref="box-{{ $frameItem->id }}"
                         @press="selectItem('{{ $frameItem->id }}')"
                         a11y-label="{{ $frameItem->name }}"

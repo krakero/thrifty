@@ -198,7 +198,7 @@ it('keeps every History control at least 44pt', function () {
     $screen = Native::test(History::class)->set('search', 'x')->set('error', 'Boom');
 
     foreach (['refresh-history', 'open-settings', 'clear-search', 'dismiss-error'] as $ref) {
-        $screen->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === $ref
+        $screen->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === $ref
             && ($node['layout']['width'] ?? 0) >= 44 && ($node['layout']['height'] ?? 0) >= 44);
     }
 });

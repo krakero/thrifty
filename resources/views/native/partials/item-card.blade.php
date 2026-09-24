@@ -13,7 +13,7 @@
 @php($showCapturedAt ??= false)
 @php($from ??= 'history')
 
-<pressable
+<thrifty-pressable
     ref="item-card-{{ $item->id }}"
     @navigate="'/finds/'.$item->id.'?from='.$from, ['from' => $from]"
     a11y-label="{{ $item->name }}, resale {{ Money::resaleRange($item) }}"
@@ -69,4 +69,4 @@
             </column>
         @endif
     </row>
-</pressable>
+</thrifty-pressable>

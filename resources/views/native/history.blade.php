@@ -17,12 +17,12 @@
                 <text font="semibold" class="text-xs uppercase tracking-widest text-theme-primary" :max-lines="1">All-time finds</text>
                 <text font="display" class="text-3xl text-theme-on-background" :max-lines="1">History</text>
             </column>
-            <pressable ref="refresh-history" @press="refresh" :press-scale="0.9" a11y-label="Refresh history" class="w-[44] h-[44] rounded-full bg-theme-surface border border-theme-outline items-center justify-center">
+            <thrifty-pressable ref="refresh-history" @press="refresh" :press-scale="0.9" a11y-label="Refresh history" class="w-[44] h-[44] rounded-full bg-theme-surface border border-theme-outline items-center justify-center">
                 <icon :ios="Ios::ClockArrowCirclepath" :android="Android::History" :size="20" class="text-theme-on-surface" />
-            </pressable>
-            <pressable ref="open-settings" @press="openSettings" :press-scale="0.9" a11y-label="Open settings" class="w-[44] h-[44] rounded-full bg-theme-surface border border-theme-outline items-center justify-center">
+            </thrifty-pressable>
+            <thrifty-pressable ref="open-settings" @press="openSettings" :press-scale="0.9" a11y-label="Open settings" class="w-[44] h-[44] rounded-full bg-theme-surface border border-theme-outline items-center justify-center">
                 <icon :ios="Ios::Gearshape" :android="Android::Settings" :size="20" class="text-theme-on-surface" />
-            </pressable>
+            </thrifty-pressable>
         </row>
 
         <row class="w-full items-center gap-2 rounded-full bg-theme-surface border border-theme-outline pl-4 pr-1 h-[48]">
@@ -36,9 +36,9 @@
                 class="flex-1 text-theme-on-surface"
             />
             @if ($search !== '')
-                <pressable ref="clear-search" @press="clearSearch" a11y-label="Clear history search" class="w-[44] h-[44] items-center justify-center">
+                <thrifty-pressable ref="clear-search" @press="clearSearch" a11y-label="Clear history search" class="w-[44] h-[44] items-center justify-center">
                     <icon :ios="Ios::XmarkCircleFill" :android="Android::Cancel" :size="18" class="text-theme-on-surface-variant" />
-                </pressable>
+                </thrifty-pressable>
             @endif
         </row>
     </column>
@@ -65,9 +65,9 @@
                     @if ($scanErrorNeedsApiKey)
                         <button ref="scan-error-settings" variant="secondary" @press="openSettings">Settings</button>
                     @endif
-                    <pressable ref="dismiss-scan-error" @press="dismissScanError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
+                    <thrifty-pressable ref="dismiss-scan-error" @press="dismissScanError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
-                    </pressable>
+                    </thrifty-pressable>
                 </row>
             @endif
 
@@ -76,9 +76,9 @@
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface py-2">{{ $error }}</text>
                     <button ref="retry-history" variant="secondary" @press="retry">Retry</button>
-                    <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
+                    <thrifty-pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
-                    </pressable>
+                    </thrifty-pressable>
                 </row>
             @endif
 

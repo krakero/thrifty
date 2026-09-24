@@ -5,7 +5,9 @@ use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ValuationSource;
 use App\Services\AppSettings;
+use App\Support\LocalTime;
 use App\Support\Money;
+use Carbon\CarbonImmutable;
 
 it('seeds the singleton stats row and accumulates run counts', function () {
     AppStat::record(frames: 1, items: 2, searches: 3, modelCalls: 4);
@@ -59,4 +61,15 @@ it('formats cents and resale ranges', function () {
         ->and(Money::resaleRange(Item::factory()->make(['estimated_low_cents' => null, 'estimated_high_cents' => null])))->toBe('Value pending')
         ->and(Money::resaleRange(Item::factory()->make(['estimated_low_cents' => null, 'estimated_high_cents' => 900])))->toBe('$0–$9')
         ->and(Money::resaleRange(Item::factory()->make(['estimated_low_cents' => 900, 'estimated_high_cents' => null])))->toBe('$9');
+});
+
+it('shows stored timestamps in the device timezone', function () {
+    LocalTime::useTimezone('America/Toronto');
+
+    expect(LocalTime::format(CarbonImmutable::parse('2026-09-23 18:30:00', 'UTC')))->toBe('Sep 23, 2026, 2:30 PM')
+        ->and(LocalTime::format(null))->toBe('—');
+
+    LocalTime::useTimezone(null);
+
+    expect(LocalTime::timezone())->toBe(config('app.timezone'));
 });

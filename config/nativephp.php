@@ -207,9 +207,9 @@ return [
         'storage/framework/testing',
         'storage/logs/laravel.log',
         'storage/framework/thrifty-camera',
-        'storage/app/frames',
-        'storage/app/thumbs',
-        'storage/app/previews',
+        'storage/app/private/frames',
+        'storage/app/private/thumbs',
+        'storage/app/private/previews',
     ],
 
     /*

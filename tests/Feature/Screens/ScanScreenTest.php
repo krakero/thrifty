@@ -370,6 +370,7 @@ it('extracts and analyzes video frames within the concurrency limit', function (
 });
 
 it('reconciles results that arrived while another screen was active', function () {
+    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test');
     $component = Native::test(Scan::class)->tap('toggle-live');
     captureFrame($component, name: 'a.jpg');
     captureFrame($component, name: 'b.jpg');
@@ -384,6 +385,7 @@ it('reconciles results that arrived while another screen was active', function (
 });
 
 it('expires analyses that never report back', function () {
+    app(AppSettings::class)->set(AppSettings::OpenAiApiKey, 'sk-test');
     scanState()->pending['lost'] = ['sessionId' => 's', 'framePath' => 'frames/lost.jpg', 'dispatchedAt' => time() - Scan::PendingExpirySeconds - 1];
     scanState()->pending['recent'] = ['sessionId' => 's', 'framePath' => 'frames/recent.jpg', 'dispatchedAt' => time()];
 
@@ -405,6 +407,16 @@ it('keeps the camera error when a video cannot be read', function () {
         ->assertSee('Paused');
 
     expect(ScanSession::sole()->ended_at)->not->toBeNull();
+});
+
+it('settles analyses that failed for a missing api key while away', function () {
+    scanState()->pending['a'] = ['sessionId' => 's', 'framePath' => 'frames/a.jpg', 'dispatchedAt' => time()];
+
+    Native::test(Scan::class)
+        ->assertSee('0/4')
+        ->assertSee('Add your OpenAI API key in Settings to start scanning.')
+        ->tap('error-open-settings')
+        ->assertNavigatedTo('/settings');
 });
 
 it('ignores results for analyses it is not waiting on', function () {

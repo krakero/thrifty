@@ -483,13 +483,24 @@ class Scan extends NativeComponent
     /**
      * Settle analyses whose shared result was delivered while another screen was active.
      *
-     * AnalyzeFrame records a FrameRun for every attempt, so the database says what happened.
+     * Agent runs record a FrameRun whether they succeed or fail, so the database says what happened. Failures
+     * that never reach the agent (a missing API key, an unreadable frame) leave no FrameRun: without a key every
+     * outstanding analysis has failed, and anything else is dropped once it outlives the task's watchdog.
      */
     private function reconcile(): void
     {
         $state = $this->state();
 
         if ($state->pending === []) {
+            return;
+        }
+
+        if (app(AppSettings::class)->openAiApiKey() === null) {
+            $state->pending = [];
+            $state->fail((new MissingApiKey)->getMessage(), needsApiKey: true);
+            $this->dropQueuedFrames();
+            $this->finishUploadIfDrained();
+
             return;
         }
 

@@ -7117,7 +7117,7 @@
             "dist": {
                 "type": "path",
                 "url": "./packages/thrifty/camera",
-                "reference": "6d8f8f047d679a25135097a73e02f8b7772e7ec6"
+                "reference": "982b73d32cde34217ef50cdbde7c49d32821f462"
             },
             "require": {
                 "nativephp/mobile": "^4.5",
@@ -7142,9 +7142,6 @@
                     "Thrifty\\Camera\\": "src/"
                 }
             },
-            "license": [
-                "MIT"
-            ],
             "description": "Thrifty's iOS camera plugin: live scanning preview, snapshots, video frame extraction, find chime and share cards.",
             "transport-options": {
                 "symlink": true,

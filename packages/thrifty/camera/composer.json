@@ -2,7 +2,6 @@
     "name": "thrifty/camera",
     "description": "Thrifty's iOS camera plugin: live scanning preview, snapshots, video frame extraction, find chime and share cards.",
     "type": "nativephp-plugin",
-    "license": "MIT",
     "version": "1.0.0",
     "require": {
         "php": "^8.3",

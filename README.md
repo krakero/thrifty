@@ -83,4 +83,6 @@ php artisan test
 
 ## License
 
-See [LICENSE.md](LICENSE.md). Fonts in `resources/fonts` are licensed under the SIL Open Font License 1.1 (see the accompanying `*-OFL.txt` files).
+Thrifty is a derivative of [wesbos/yard-sale](https://github.com/wesbos/yard-sale) and is available under **the same license as that repository**;
+see [LICENSE.md](LICENSE.md). At the time of writing the upstream repository has no license, so check it before reusing this code. The
+NativePHP starter code (MIT) and the bundled fonts (SIL OFL 1.1) keep their own licenses, as listed in LICENSE.md.

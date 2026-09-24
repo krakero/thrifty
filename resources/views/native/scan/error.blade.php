@@ -2,16 +2,20 @@
 @use('App\Icons\Android')
 
 @if ($state->error)
-    <row ref="error-banner" class="w-full items-center gap-3 rounded-xl bg-theme-destructive/90 px-3 py-2">
+    <row ref="error-banner" class="w-full items-center gap-2 rounded-xl bg-theme-destructive/90 pl-3 py-1">
         <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Error" :size="16" class="text-theme-on-destructive" />
         <text class="flex-1 text-sm text-theme-on-destructive">{{ $state->error }}</text>
         @if ($state->errorNeedsApiKey)
-            <pressable ref="error-open-settings" @press="openSettings" a11y-label="Open Settings" class="rounded-full bg-theme-on-destructive px-3 py-1">
-                <text font="semibold" class="text-xs text-theme-destructive">Settings</text>
-            </pressable>
+            <button ref="error-open-settings" variant="secondary" size="sm" label="Settings" a11y-label="Open Settings" @press="openSettings" class="min-h-[44]" />
         @endif
-        <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="p-1">
-            <icon :ios="Ios::Xmark" :android="Android::Close" :size="16" class="text-theme-on-destructive" />
-        </pressable>
+        <icon
+            ref="dismiss-error"
+            @press="dismissError"
+            :ios="Ios::Xmark"
+            :android="Android::Close"
+            :size="16"
+            a11y-label="Dismiss error"
+            class="text-theme-on-destructive"
+        />
     </row>
 @endif

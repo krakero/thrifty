@@ -8,9 +8,7 @@
             <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 px-3 py-2">
                 <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Error" :size="16" class="text-theme-destructive" />
                 <text class="flex-1 text-sm text-theme-on-surface">{{ $error }}</text>
-                <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="p-1">
-                    <icon :ios="Ios::Xmark" :android="Android::Close" :size="16" class="text-theme-on-surface" />
-                </pressable>
+                <icon ref="dismiss-error" @press="dismissError" :ios="Ios::Xmark" :android="Android::Close" :size="16" a11y-label="Dismiss error" class="text-theme-on-surface" />
             </row>
         @endif
 
@@ -99,12 +97,17 @@
                 a11y-label="OpenAI API key"
                 class="w-full"
             />
-            <pressable ref="get-api-key" @press="openApiKeyPage" a11y-label="Get an OpenAI API key" class="self-start">
-                <row class="items-center gap-1">
-                    <text font="semibold" class="text-sm text-theme-primary">Get an API key</text>
-                    <icon :ios="Ios::ArrowUpRight" :android="Android::OpenInNew" :size="12" class="text-theme-primary" />
-                </row>
-            </pressable>
+            <button
+                ref="get-api-key"
+                variant="ghost"
+                size="sm"
+                label="Get an API key"
+                icon-trailing="{{ Ios::ArrowUpRight->value }}"
+                a11y-label="Get an OpenAI API key"
+                a11y-hint="Opens the OpenAI API keys page"
+                @press="openApiKeyPage"
+                class="self-start min-h-[44]"
+            />
 
             <text class="text-sm text-theme-on-surface-variant mt-2">eBay (optional). Add a client ID and secret to compare against active eBay listings.</text>
             <outlined-text-input
@@ -136,14 +139,16 @@
                         <text font="semibold" class="text-sm text-theme-on-surface" :max-lines="1">{{ $item->name }}</text>
                         <text font="mono" class="text-sm text-theme-accent">{{ Money::resaleRange($item) }}</text>
                     </column>
-                    <pressable
+                    {{-- An icon with a press handler is a labelled 44pt button on iOS; a pressable isn't. --}}
+                    <icon
                         ref="delete-{{ $item->id }}"
                         @press="deleteFind('{{ $item->id }}')"
+                        :ios="Ios::Trash"
+                        :android="Android::DeleteOutline"
+                        :size="18"
                         a11y-label="Delete {{ $item->name }}"
-                        class="w-[40] h-[40] items-center justify-center rounded-full"
-                    >
-                        <icon :ios="Ios::Trash" :android="Android::DeleteOutline" :size="18" class="text-theme-destructive" />
-                    </pressable>
+                        class="text-theme-destructive"
+                    />
                 </row>
             @empty
                 <text class="text-sm text-theme-on-surface-variant">No saved finds.</text>

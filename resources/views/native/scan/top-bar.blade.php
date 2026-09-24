@@ -1,46 +1,61 @@
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
+@use('App\Scanning\LiveScanState')
 @use('Native\Mobile\Edge\Layouts\Builders\NavAction')
 
+@php
+    $cameraChoice = fn (string $id, string $label, string $facing, Ios $icon, Android $androidIcon, string $method) => NavAction::make($id)
+        ->label($label)
+        ->icon(
+            ($state->facing === $facing ? Ios::Checkmark : $icon)->value,
+            ios: ($state->facing === $facing ? Ios::Checkmark : $icon)->value,
+            android: ($state->facing === $facing ? Android::Check : $androidIcon)->value,
+        )
+        ->press($method);
+@endphp
+
 <row class="w-full items-center gap-2 px-4 pt-3 pb-2">
-    <pressable
+    {{-- A real button (not a pressable) so VoiceOver gets a labelled button; the menu marks the current camera. --}}
+    <button
         ref="camera-select"
-        a11y-label="Select camera"
+        variant="secondary"
+        size="sm"
+        class="glass"
+        icon="{{ Ios::Camera->value }}"
+        icon-trailing="{{ Ios::ChevronDown->value }}"
+        label="{{ $cameraLabel }}"
+        a11y-label="Camera: {{ $cameraLabel }}"
+        a11y-hint="Chooses the back camera, the front camera, or turns the camera off"
         :menu="[
-            NavAction::make('camera-back')->label('Back camera')->icon(ios: Ios::Camera->value, android: Android::PhotoCamera->value)->press('useBackCamera'),
-            NavAction::make('camera-front')->label('Front camera')->icon(ios: Ios::CameraRotate->value, android: Android::Cameraswitch->value)->press('useFrontCamera'),
+            $cameraChoice('camera-back', 'Back camera', LiveScanState::FacingBack, Ios::Camera, Android::PhotoCamera, 'useBackCamera'),
+            $cameraChoice('camera-front', 'Front camera', LiveScanState::FacingFront, Ios::CameraRotate, Android::Cameraswitch, 'useFrontCamera'),
             NavAction::divider(),
-            NavAction::make('camera-off')->label('Camera off')->icon(ios: Ios::Xmark->value, android: Android::NoPhotography->value)->press('turnCameraOff'),
+            $cameraChoice('camera-off', 'Camera off', LiveScanState::FacingOff, Ios::Xmark, Android::NoPhotography, 'turnCameraOff'),
         ]"
-        class="rounded-full bg-theme-background/60 border border-theme-outline px-3 h-[34]"
-    >
-        <row class="h-[34] items-center gap-1">
-            <icon :ios="Ios::Camera" :android="Android::PhotoCamera" :size="14" class="text-theme-on-surface" />
-            <text font="semibold" class="text-sm text-theme-on-surface">{{ $cameraLabel }}</text>
-            <icon :ios="Ios::ChevronDown" :android="Android::ExpandMore" :size="10" class="text-theme-on-surface-variant" />
-        </row>
-    </pressable>
+    />
 
     <spacer />
 
     @if ($state->scanning)
-        <row ref="live-state" a11y-label="Live" class="h-[34] items-center gap-2 rounded-full bg-theme-accent px-3">
+        <row ref="live-state" class="h-[34] items-center gap-2 rounded-full bg-theme-accent px-3">
             <column class="w-[7] h-[7] rounded-full bg-theme-on-accent" />
-            <text font="semibold" class="text-xs text-theme-on-accent">Live</text>
+            <text font="semibold" :max-lines="1" class="text-xs text-theme-on-accent">Live</text>
         </row>
     @else
-        <row ref="live-state" a11y-label="Paused" class="h-[34] items-center gap-2 rounded-full bg-theme-background/60 px-3">
+        <row ref="live-state" class="h-[34] items-center gap-2 rounded-full bg-theme-background/60 px-3">
             <column class="w-[7] h-[7] rounded-full bg-theme-on-surface-variant" />
-            <text font="semibold" class="text-xs text-theme-on-surface-variant">Paused</text>
+            <text font="semibold" :max-lines="1" class="text-xs text-theme-on-surface-variant">{{ $cameraStarting ? 'Starting' : 'Paused' }}</text>
         </row>
     @endif
 
-    <pressable
+    {{-- An icon with a press handler is a labelled 44pt button on iOS. --}}
+    <icon
         ref="open-settings"
         @press="openSettings"
+        :ios="Ios::Gearshape"
+        :android="Android::Settings"
+        :size="20"
         a11y-label="Open settings"
-        class="w-[34] h-[34] items-center justify-center rounded-xl bg-theme-background/60 border border-theme-outline"
-    >
-        <icon :ios="Ios::Gearshape" :android="Android::Settings" :size="16" class="text-theme-on-surface" />
-    </pressable>
+        class="text-theme-on-surface"
+    />
 </row>

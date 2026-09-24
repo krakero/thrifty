@@ -4,18 +4,23 @@
 
 <stack class="w-full h-full bg-theme-background">
     {{-- Camera stage --}}
-    <thrifty-camera
-        ref="camera"
-        :scanning="$state->scanning && $state->source === ScanSource::Camera->value"
-        :interval="$scanIntervalSeconds"
-        facing="{{ $state->facing }}"
-        frames-directory="{{ $framesDirectory }}"
-        a11y-label="Camera preview"
-        class="w-full h-full"
-    />
+    @if ($state->facing === 'off')
+        <thrifty-camera ref="camera" :scanning="false" :interval="$scanIntervalSeconds" facing="off" frames-directory="{{ $framesDirectory }}" class="w-full h-full" />
+    @else
+        <thrifty-camera
+            ref="camera"
+            :scanning="$state->scanning && $state->cameraRunning && $state->source === ScanSource::Camera->value"
+            :interval="$scanIntervalSeconds"
+            facing="{{ $state->facing }}"
+            frames-directory="{{ $framesDirectory }}"
+            a11y-label="Camera preview"
+            class="w-full h-full"
+        />
+    @endif
 
     @if ($stillPreview)
-        <image src="{{ $stillPreview }}" :fit="1" alt="{{ $state->sourceLabel }}" class="w-full h-full bg-theme-background" />
+        {{-- Cover, like the web's object-fit: cover still preview. --}}
+        <image src="{{ $stillPreview }}" :fit="2" alt="{{ $state->sourceLabel }}" class="w-full h-full bg-theme-background" />
     @elseif ($state->sessionId === null)
         <column class="w-full h-full items-center justify-center bg-theme-background">
             <column class="w-[98] h-[98] items-center justify-center rounded-full border border-theme-outline bg-theme-surface/40">
@@ -23,6 +28,13 @@
             </column>
         </column>
     @endif
+
+    {{-- The web's camera-shade: darken the top and bottom so the overlay stays legible over bright scenes. --}}
+    <column class="w-full h-full">
+        <column class="w-full h-[180] bg-gradient-to-b from-black/70 to-transparent" />
+        <spacer />
+        <column class="w-full h-[220] bg-gradient-to-t from-black/70 to-transparent" />
+    </column>
 
     @include('native.scan.flash')
 
@@ -55,7 +67,7 @@
             </scroll-view>
 
             {{-- Re-render ticks: finds still streaming in, a snapshot waiting on the camera, analyses to check on. --}}
-            @if ($revealing || $snapshotPending)
+            @if ($revealing)
                 <spacer native:poll="500ms" class="h-[0]" />
             @elseif ($state->inFlight() > 0)
                 <spacer native:poll="5s" class="h-[0]" />

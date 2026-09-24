@@ -26,6 +26,7 @@ use Native\Mobile\Edge\NativeComponent;
 use Native\Mobile\Events\Gallery\MediaSelected;
 use Native\Mobile\Facades\Camera;
 use Thrifty\Camera\Events\CameraFailed;
+use Thrifty\Camera\Events\CameraStarted;
 use Thrifty\Camera\Events\FrameCaptured;
 use Thrifty\Camera\Events\VideoFramesExtracted;
 use Thrifty\Camera\Facades\ThriftyCamera;
@@ -49,9 +50,6 @@ class Scan extends NativeComponent
 
     public const FlashSeconds = 0.32;
 
-    /** How long a camera turned on by Snap gets to start its preview before the snapshot is taken. */
-    public const SnapshotWarmupSeconds = 1.0;
-
     /** How often outstanding analyses are checked against the database while Scan is showing. */
     public const ReconcileIntervalSeconds = 5;
 
@@ -72,6 +70,7 @@ class Scan extends NativeComponent
 
     public function onResume(): void
     {
+        $this->state()->clearResolvedKeyError();
         app(VideoRunDrainer::class)->drain();
         $this->reconcile(settleRecent: true);
     }
@@ -84,7 +83,7 @@ class Scan extends NativeComponent
     {
         $this->stopMedia();
         $this->abandonImports();
-        $this->state()->facing = LiveScanState::FacingOff;
+        $this->turnCameraOffState();
         $this->endSession();
 
         parent::unmount();
@@ -92,41 +91,41 @@ class Scan extends NativeComponent
 
     // ── Controls ─────────────────────────────────────
 
+    /**
+     * Live starts once the camera is actually running: at once when it already is, otherwise on CameraStarted.
+     */
     public function toggleLiveScan(): void
     {
         $state = $this->state();
 
-        if ($state->scanning) {
+        if ($state->scanning || $state->pendingCameraAction === 'live') {
+            $state->pendingCameraAction = null;
             $this->stopScan();
 
             return;
         }
 
-        $this->ensureCamera();
-        $state->scanning = true;
+        if ($this->cameraReady()) {
+            $state->scanning = true;
+
+            return;
+        }
+
+        $this->requestCamera($this->defaultFacing(), 'live');
     }
 
     /**
-     * Capture the current preview. With the camera off it is turned on first and the snapshot follows once the
-     * preview has had a moment to start (the plugin can only capture from a running session).
+     * Capture the current preview, turning the camera on first when needed (the web's `ensureCamera` then capture).
      */
     public function takeSnapshot(): void
     {
-        $state = $this->state();
-        $cameraWasOff = $state->facing === LiveScanState::FacingOff;
-        $this->ensureCamera();
-
-        if ($this->atCapacity()) {
-            return;
-        }
-
-        if ($cameraWasOff) {
-            $state->snapshotDueAt = microtime(true) + self::SnapshotWarmupSeconds;
+        if (! $this->cameraReady()) {
+            $this->requestCamera($this->defaultFacing(), 'snap');
 
             return;
         }
 
-        ThriftyCamera::snapshot(FrameFiles::framesDirectory());
+        $this->snapshotIfFree();
     }
 
     public function upload(): void
@@ -227,8 +226,40 @@ class Scan extends NativeComponent
     }
 
     /**
+     * The requested camera is running: begin its session (the web begins one only after `getUserMedia` succeeds)
+     * and carry out whatever was waiting on it. Also sent when the preview reappears or the app returns to the
+     * foreground, which just confirms the running camera.
+     */
+    #[On(CameraStarted::class)]
+    public function cameraStarted(string $facing): void
+    {
+        $state = $this->state();
+
+        if ($state->facing === LiveScanState::FacingOff) {
+            return;
+        }
+
+        $state->cameraRunning = true;
+
+        if ($state->source !== ScanSource::Camera->value || $state->sessionId === null) {
+            $state->sourceLabel = $state->facing === LiveScanState::FacingFront ? 'Front camera' : 'Back camera';
+            $this->beginSession(ScanSource::Camera);
+        }
+
+        $action = $state->pendingCameraAction;
+        $state->pendingCameraAction = null;
+
+        match ($action) {
+            'live' => $state->scanning = true,
+            'snap' => $this->snapshotIfFree(),
+            default => null,
+        };
+    }
+
+    /**
      * Failures from an earlier (cancelled or replaced) video run are ignored, and so are photo import failures
-     * that belong to an earlier pick.
+     * that belong to an earlier pick. A camera failure turns the camera selector back to Off, like the web's
+     * `selectCamera` catch.
      */
     #[On(CameraFailed::class)]
     public function cameraFailed(string $message, ?string $runId = null): void
@@ -247,10 +278,13 @@ class Scan extends NativeComponent
             return;
         }
 
-        $state->snapshotDueAt = 0.0;
-
-        if ($state->videoRunId === null) {
+        if ($state->facing !== LiveScanState::FacingOff) {
             $state->scanning = false;
+            $this->turnCameraOffState();
+
+            if ($state->source === ScanSource::Camera->value) {
+                $this->endSession();
+            }
         }
 
         $state->fail($message);
@@ -285,7 +319,6 @@ class Scan extends NativeComponent
     {
         $state = $this->state();
         $now = microtime(true);
-        $this->takeDueSnapshot($now);
 
         if ($state->pending !== [] && $now - $state->lastReconcileAt >= self::ReconcileIntervalSeconds) {
             $this->reconcile(settleRecent: false);
@@ -304,7 +337,7 @@ class Scan extends NativeComponent
             'liveItems' => $this->liveItems($state->liveItemIds),
             'flashing' => $now - $state->flashAt < self::FlashSeconds,
             'revealing' => $state->revealQueue !== [],
-            'snapshotPending' => $state->snapshotDueAt > 0,
+            'cameraStarting' => $state->pendingCameraAction !== null,
             'cameraLabel' => match ($state->facing) {
                 LiveScanState::FacingBack => 'Back camera',
                 LiveScanState::FacingFront => 'Front camera',
@@ -326,27 +359,44 @@ class Scan extends NativeComponent
     }
 
     /**
-     * Keep the running camera session, or turn the camera on and start a new one (the web's `ensureCamera`).
+     * The camera is running with a camera session to capture into.
      */
-    private function ensureCamera(): void
+    private function cameraReady(): bool
     {
         $state = $this->state();
 
-        if ($state->facing !== LiveScanState::FacingOff && $state->source === ScanSource::Camera->value && $state->sessionId !== null) {
-            return;
-        }
-
-        $this->openCamera($state->facing === LiveScanState::FacingOff ? LiveScanState::FacingBack : $state->facing);
+        return $state->facing !== LiveScanState::FacingOff
+            && $state->cameraRunning
+            && $state->source === ScanSource::Camera->value
+            && $state->sessionId !== null;
     }
 
-    private function openCamera(string $facing): void
+    private function defaultFacing(): string
     {
-        $this->stopMedia();
+        $facing = $this->state()->facing;
 
+        return $facing === LiveScanState::FacingOff ? LiveScanState::FacingBack : $facing;
+    }
+
+    /**
+     * Ask the plugin for a camera. Nothing else changes until it answers with CameraStarted or CameraFailed.
+     */
+    private function requestCamera(string $facing, ?string $then): void
+    {
         $state = $this->state();
-        $state->facing = $facing;
-        $state->sourceLabel = $facing === LiveScanState::FacingFront ? 'Front camera' : 'Back camera';
-        $this->beginSession(ScanSource::Camera);
+
+        if ($state->facing !== $facing || $state->source !== ScanSource::Camera->value) {
+            $this->stopMedia();
+            $state->facing = $facing;
+            $state->cameraRunning = false;
+        }
+
+        $state->pendingCameraAction = $then;
+
+        // Already running on this camera: the plugin has nothing new to start, so act on it now.
+        if ($state->cameraRunning) {
+            $this->cameraStarted($facing);
+        }
     }
 
     private function selectCamera(string $facing): void
@@ -355,16 +405,35 @@ class Scan extends NativeComponent
 
         if ($facing === LiveScanState::FacingOff) {
             $this->stopMedia();
-            $state->facing = LiveScanState::FacingOff;
+            $this->turnCameraOffState();
             $state->sourceLabel = 'Camera off';
             $this->endSession();
 
             return;
         }
 
+        if ($facing === $state->facing) {
+            return;
+        }
+
         $resumeScanning = $state->scanning;
-        $this->openCamera($facing);
-        $state->scanning = $resumeScanning;
+        $this->endSession();
+        $this->requestCamera($facing, $resumeScanning ? 'live' : 'open');
+    }
+
+    private function turnCameraOffState(): void
+    {
+        $state = $this->state();
+        $state->facing = LiveScanState::FacingOff;
+        $state->cameraRunning = false;
+        $state->pendingCameraAction = null;
+    }
+
+    private function snapshotIfFree(): void
+    {
+        if (! $this->atCapacity()) {
+            ThriftyCamera::snapshot(FrameFiles::framesDirectory());
+        }
     }
 
     /**
@@ -383,7 +452,6 @@ class Scan extends NativeComponent
     {
         $state = $this->state();
         $state->scanning = false;
-        $state->snapshotDueAt = 0.0;
         $this->cancelVideo();
         app(Stage::class)->clear();
     }
@@ -436,7 +504,7 @@ class Scan extends NativeComponent
     {
         $this->stopMedia();
         $state = $this->state();
-        $state->facing = LiveScanState::FacingOff;
+        $this->turnCameraOffState();
         $state->sourceLabel = 'Uploaded photo';
         $this->beginSession(ScanSource::Image, basename($absolutePath));
 
@@ -521,7 +589,7 @@ class Scan extends NativeComponent
     {
         $this->stopMedia();
         $state = $this->state();
-        $state->facing = LiveScanState::FacingOff;
+        $this->turnCameraOffState();
         $state->sourceLabel = 'Uploaded video';
         $this->beginSession(ScanSource::Video, basename($absolutePath));
         $state->pickedMediaPath = $absolutePath;
@@ -555,23 +623,7 @@ class Scan extends NativeComponent
         }
     }
 
-    private function takeDueSnapshot(float $now): void
-    {
-        $state = $this->state();
-
-        if ($state->snapshotDueAt <= 0 || $now < $state->snapshotDueAt) {
-            return;
-        }
-
-        $state->snapshotDueAt = 0.0;
-
-        if ($state->facing !== LiveScanState::FacingOff && ! $this->atCapacity()) {
-            ThriftyCamera::snapshot(FrameFiles::framesDirectory());
-        }
-    }
-
     /**
-     * Settle analyses whose shared result never reached Scan    /**
      * Settle analyses whose shared result never reached Scan, by their FrameRun.
      *
      * The agent saves the FrameRun under the pre-generated id on success and on every failure except a missing API

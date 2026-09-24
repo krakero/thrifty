@@ -1,49 +1,53 @@
 @use('App\Icons\Ios')
-@use('App\Icons\Android')
 
-{{-- Scan actions, docked above the tab bar (the web app's bottom-nav dock buttons). --}}
+{{--
+    Scan actions, docked above the tab bar (the web app's bottom-nav dock). Native buttons, so VoiceOver gets
+    labelled buttons with the button trait; `pressable` rows are invisible to it on iOS.
+--}}
 <row class="w-full items-center justify-center gap-3 px-4 pt-2 pb-3">
-    <pressable
-        ref="toggle-live"
-        @press="toggleLiveScan"
-        :press-scale="0.95"
-        a11y-label="{{ $state->scanning ? 'Stop live scanning' : 'Start live scanning' }}"
-        :class="$state->scanning ? 'flex-1 h-[56] items-center justify-center rounded-2xl bg-theme-accent' : 'flex-1 h-[56] items-center justify-center rounded-2xl bg-theme-background/70 border border-theme-outline'"
-    >
-        <column class="items-center gap-1">
-            @if ($state->scanning)
-                <icon :ios="Ios::StopFill" :android="Android::Stop" :size="18" class="text-theme-on-accent" />
-                <text font="semibold" class="text-xs text-theme-on-accent">Stop</text>
-            @else
-                <icon :ios="Ios::Viewfinder" :android="Android::CenterFocusStrong" :size="20" class="text-theme-on-surface" />
-                <text font="semibold" class="text-xs text-theme-on-surface">Live</text>
-            @endif
-        </column>
-    </pressable>
+    @if ($state->scanning || $cameraStarting)
+        <button
+            ref="toggle-live"
+            variant="accent"
+            size="lg"
+            icon="{{ Ios::StopFill->value }}"
+            label="Stop"
+            a11y-label="Stop live scanning"
+            @press="toggleLiveScan"
+            class="flex-1 min-h-[52]"
+        />
+    @else
+        <button
+            ref="toggle-live"
+            variant="secondary"
+            size="lg"
+            class="glass flex-1 min-h-[52]"
+            icon="{{ Ios::Viewfinder->value }}"
+            label="Live"
+            a11y-label="Start live scanning"
+            @press="toggleLiveScan"
+        />
+    @endif
 
-    <pressable
+    <button
         ref="snapshot"
-        @press="takeSnapshot"
-        :press-scale="0.93"
+        variant="primary"
+        size="lg"
+        icon="{{ Ios::CameraFill->value }}"
+        label="Snap"
         a11y-label="Take snapshot"
-        class="w-[72] h-[72] items-center justify-center rounded-full bg-theme-primary"
-    >
-        <column class="items-center gap-1">
-            <icon :ios="Ios::CameraFill" :android="Android::PhotoCamera" :size="22" class="text-theme-on-primary" />
-            <text font="semibold" class="text-xs text-theme-on-primary">Snap</text>
-        </column>
-    </pressable>
+        @press="takeSnapshot"
+        class="min-h-[52]"
+    />
 
-    <pressable
+    <button
         ref="upload"
-        @press="upload"
-        :press-scale="0.95"
+        variant="secondary"
+        size="lg"
+        class="glass flex-1 min-h-[52]"
+        icon="{{ Ios::PhotoOnRectangle->value }}"
+        label="Upload"
         a11y-label="Upload a photo or video"
-        class="flex-1 h-[56] items-center justify-center rounded-2xl bg-theme-background/70 border border-theme-outline"
-    >
-        <column class="items-center gap-1">
-            <icon :ios="Ios::PhotoOnRectangle" :android="Android::AddPhotoAlternate" :size="20" class="text-theme-on-surface" />
-            <text font="semibold" class="text-xs text-theme-on-surface">Upload</text>
-        </column>
-    </pressable>
+        @press="upload"
+    />
 </row>

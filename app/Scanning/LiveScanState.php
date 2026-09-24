@@ -3,6 +3,7 @@
 namespace App\Scanning;
 
 use App\Enums\ScanSource;
+use App\Services\AppSettings;
 use Illuminate\Container\Attributes\Singleton;
 
 /**
@@ -51,8 +52,14 @@ class LiveScanState
     /** The uploaded photo or latest video frame shown on the stage, relative to the `local` disk. */
     public ?string $stillPreviewPath = null;
 
-    /** When a snapshot requested while the camera was off should be taken (microtime), or 0. */
-    public float $snapshotDueAt = 0.0;
+    /** Whether the plugin has reported the requested camera running (CameraStarted) since it was last requested. */
+    public bool $cameraRunning = false;
+
+    /**
+     * What to do once the requested camera reports CameraStarted: go Live, take a snapshot, or nothing more.
+     * Mirrors the web awaiting `getUserMedia` before continuing.
+     */
+    public ?string $pendingCameraAction = null;
 
     /**
      * Analyses in flight, keyed by async task id.
@@ -85,6 +92,9 @@ class LiveScanState
     public ?string $error = null;
 
     public bool $errorNeedsApiKey = false;
+
+    /** Hash of the API key saved when a key error was shown, so the banner can clear once the key changes. */
+    public ?string $apiKeyAtError = null;
 
     /**
      * @param  list<string>  $itemIds
@@ -123,15 +133,37 @@ class LiveScanState
         return count($this->pending);
     }
 
+    /**
+     * Show an error. Errors about the API key (missing or rejected) also offer a way to Settings.
+     */
     public function fail(string $message, bool $needsApiKey = false): void
     {
         $this->error = $message;
-        $this->errorNeedsApiKey = $needsApiKey;
+        $this->errorNeedsApiKey = $needsApiKey || str_contains($message, 'API key');
+        $this->apiKeyAtError = $this->errorNeedsApiKey ? self::keyFingerprint(app(AppSettings::class)->openAiApiKey()) : null;
+    }
+
+    /**
+     * Clear an API key error once a different key has been saved.
+     */
+    public function clearResolvedKeyError(): void
+    {
+        $key = app(AppSettings::class)->openAiApiKey();
+
+        if ($this->errorNeedsApiKey && $key !== null && self::keyFingerprint($key) !== $this->apiKeyAtError) {
+            $this->clearError();
+        }
     }
 
     public function clearError(): void
     {
         $this->error = null;
         $this->errorNeedsApiKey = false;
+        $this->apiKeyAtError = null;
+    }
+
+    private static function keyFingerprint(?string $key): ?string
+    {
+        return $key === null ? null : hash('sha256', $key);
     }
 }

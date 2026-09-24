@@ -8,6 +8,7 @@
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
 @use('App\Support\Money')
+@use('App\Support\LocalTime')
 @php($showCapturedAt ??= false)
 @php($from ??= 'history')
 
@@ -40,7 +41,7 @@
             </row>
 
             @if ($showCapturedAt)
-                <text class="text-xs text-theme-on-surface-variant">Snapped {{ $item->last_seen_at->format('M j, Y, g:i A') }}</text>
+                <text class="text-xs text-theme-on-surface-variant">Snapped {{ LocalTime::format($item->last_seen_at) }}</text>
             @endif
 
             <text font="display" class="text-base text-theme-on-surface" :max-lines="2">{{ $item->name }}</text>

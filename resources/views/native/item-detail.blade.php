@@ -139,8 +139,8 @@
                     'Model' => $item->model ?? 'Unknown',
                     'Condition' => $item->condition,
                     'Seen' => $item->seen_count.' '.Str::plural('time', $item->seen_count),
-                    'First seen' => $item->first_seen_at->format('M j, Y, g:i A'),
-                    'Last seen' => $item->last_seen_at->format('M j, Y, g:i A'),
+                    'First seen' => $firstSeen,
+                    'Last seen' => $lastSeen,
                 ] as $label => $value)
                     @if (! $loop->first)
                         <divider class="border-theme-outline" />

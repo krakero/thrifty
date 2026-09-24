@@ -5,7 +5,16 @@ use App\Models\FrameRun;
 use App\Models\Item;
 use App\NativeComponents\AgentActivity;
 use App\NativeComponents\Layouts\StackLayout;
+use App\Support\LocalTime;
 use Native\Mobile\Testing\Native;
+
+beforeEach(function () {
+    LocalTime::useTimezone('America/New_York');
+});
+
+afterEach(function () {
+    LocalTime::useTimezone(null);
+});
 
 function agentActivity(Item|string $item)
 {
@@ -43,7 +52,8 @@ it('shows the run summary and audit trail', function () {
         ->assertSee('Completed')
         ->assertSee('gpt-5.6-luna')
         ->assertSee('12.3s')
-        ->assertSee('Sep 16, 2026, 12:00:12 PM')
+        ->assertSee('Sep 16, 2026, 8:00:00 AM')
+        ->assertSee('Sep 16, 2026, 8:00:12 AM')
         ->assertSee('Agent instructions')
         ->assertSee('Inspect a single frame from a yard sale.')
         ->assertSee('[frame stored on device]')

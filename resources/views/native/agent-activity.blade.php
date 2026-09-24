@@ -6,6 +6,7 @@
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
 @use('App\NativeComponents\AgentActivity')
+@use('App\Support\LocalTime')
 
 @if ($item === null || $run === null)
     <column class="w-full h-full items-center justify-center gap-3 p-8 bg-theme-background">
@@ -39,12 +40,12 @@
                 <row class="w-full items-center">
                     <text class="text-xs text-theme-on-surface-variant">Captured</text>
                     <spacer />
-                    <text class="text-xs text-theme-on-surface">{{ $run->captured_at->format('M j, Y, g:i:s A') }}</text>
+                    <text class="text-xs text-theme-on-surface">{{ LocalTime::format($run->captured_at, 'M j, Y, g:i:s A') }}</text>
                 </row>
                 <row class="w-full items-center">
                     <text class="text-xs text-theme-on-surface-variant">Completed</text>
                     <spacer />
-                    <text class="text-xs text-theme-on-surface">{{ $run->completed_at?->format('M j, Y, g:i:s A') ?? '—' }}</text>
+                    <text class="text-xs text-theme-on-surface">{{ LocalTime::format($run->completed_at, 'M j, Y, g:i:s A') }}</text>
                 </row>
                 @if ($run->error !== null)
                     <row class="w-full items-center gap-2 rounded-xl bg-theme-destructive/15 p-3">

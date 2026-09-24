@@ -6,12 +6,20 @@ use App\Models\Item;
 use App\Models\ValuationSource;
 use App\NativeComponents\ItemDetail;
 use App\NativeComponents\Layouts\StackLayout;
+use App\Support\LocalTime;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Native\Mobile\Events\Alert\ButtonPressed;
 use Native\Mobile\Testing\Native;
 
 beforeEach(function () {
     Storage::fake('local');
+    LocalTime::useTimezone('America/New_York');
+});
+
+afterEach(function () {
+    LocalTime::useTimezone(null);
 });
 
 /**
@@ -34,9 +42,14 @@ function frameWithTwoFinds(): array
         'observed_price_cents' => 500, 'active_price_cents' => 4200, 'sold_price_cents' => 3000,
         'value_summary' => 'Sells steadily. See [a guide](https://example.com/guide).',
         'box_x_min' => 100, 'box_y_min' => 125, 'box_x_max' => 600, 'box_y_max' => 800,
-        'last_seen_at' => now(),
+        'thumbnail_path' => 'thumbs/lamp.jpg',
+        'first_seen_at' => '2026-09-16 12:00:00',
+        'last_seen_at' => '2026-09-16 16:30:00',
     ]);
-    $chair = Item::factory()->for($run)->create(['name' => 'Oak chair', 'last_seen_at' => now()->subMinute()]);
+    $chair = Item::factory()->for($run)->create([
+        'name' => 'Oak chair', 'thumbnail_path' => 'thumbs/chair.jpg', 'last_seen_at' => '2026-09-16 16:29:00',
+        'box_x_min' => 700, 'box_y_min' => 0, 'box_x_max' => 1000, 'box_y_max' => 400,
+    ]);
 
     return [$run, $lamp, $chair];
 }
@@ -63,17 +76,42 @@ it('shows the find, its frame mates, prices and facts', function () {
         ->assertSee('Sells steadily. See a guide.')
         ->assertSee('Stiffel')
         ->assertSee('3 times')
+        ->assertSee('Sep 16, 2026, 8:00 AM')
+        ->assertSee('Sep 16, 2026, 12:30 PM')
         ->assertSee('Agent activity');
 });
 
-it('draws a box for every find in the frame, sized as percentages', function () {
+it('draws a box for every find in the frame, split by flex-grow ratios', function () {
     [, $lamp, $chair] = frameWithTwoFinds();
 
-    $screen = itemDetail($lamp)
-        ->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$lamp->id}")
-        ->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$chair->id}");
+    $screen = itemDetail($lamp);
+    $layer = fn (string $id) => collect(Arr::dot($screen->tree()))->keys()
+        ->first(fn (string $key) => str_ends_with($key, '.ref') && Arr::get($screen->tree(), $key) === "box-layer-{$id}");
+    $grows = function (string $id) use ($screen, $layer): array {
+        $node = Arr::get($screen->tree(), Str::beforeLast($layer($id), '.ref'));
+        [$top, $band, $bottom] = $node['children'];
 
-    expect(json_encode($screen->tree()))->toContain('"12.5%"', '"67.5%"', '"50%"');
+        return [
+            $top['layout']['flex_grow'] ?? 0, $band['layout']['flex_grow'] ?? 0, $bottom['layout']['flex_grow'] ?? 0,
+            ...array_map(fn (array $child) => $child['layout']['flex_grow'] ?? 0, $band['children']),
+        ];
+    };
+
+    expect($grows($lamp->id))->toBe([125.0, 675.0, 200.0, 100.0, 500.0, 400.0])
+        ->and($grows($chair->id))->toBe([0.0, 400.0, 600.0, 700.0, 300.0, 0.0]);
+
+    $screen->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$chair->id}")
+        ->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$lamp->id}")
+        ->assertElement('column', fn (array $node) => ($node['layout']['flex_grow'] ?? null) === 500.0
+            && ($node['children'][0]['style']['border_width'] ?? null) === 3.0
+            && ($node['children'][0]['ref'] ?? null) === "box-{$lamp->id}");
+});
+
+it('clamps and orders box edges', function () {
+    expect(ItemDetail::boxRatios(['xMin' => 900, 'yMin' => -20, 'xMax' => 1200, 'yMax' => 500]))
+        ->toBe(['top' => 0, 'height' => 500, 'bottom' => 500, 'left' => 900, 'width' => 100, 'right' => 0])
+        ->and(ItemDetail::boxRatios(['xMin' => 600, 'yMin' => 800, 'xMax' => 100, 'yMax' => 200]))
+        ->toBe(['top' => 200, 'height' => 600, 'bottom' => 200, 'left' => 100, 'width' => 500, 'right' => 400]);
 });
 
 it('switches the selected find from a box or the frame list', function () {
@@ -123,17 +161,47 @@ it('lists comparables with their type and opens linked ones in the in-app browse
         ->assertNativeCalled('Browser.OpenInApp', fn (array $params) => $params['url'] === 'https://example.com/guide');
 });
 
-it('shares the find as an image card', function () {
-    [, $lamp] = frameWithTwoFinds();
+it('shares the find as an image card with every box, the facts and the top comparables', function () {
+    [, $lamp, $chair] = frameWithTwoFinds();
+    foreach (range(1, 4) as $index) {
+        ValuationSource::factory()->for($lamp)->create([
+            'source_type' => ValuationSourceType::Sold, 'title' => "Comp {$index}", 'price_cents' => 1000 * $index, 'captured_at' => now()->subMinutes($index),
+        ]);
+    }
 
     itemDetail($lamp)
         ->press('share')
-        ->assertNativeCalled('ThriftyCamera.ShareFindCard', fn (array $card) => $card['title'] === 'Brass lamp'
-            && $card['subtitle'] === 'Lighting · 91% confidence'
-            && str_ends_with($card['imagePath'], 'frames/frame.jpg')
-            && $card['box'] === ['xMin' => 100, 'yMin' => 125, 'xMax' => 600, 'yMax' => 800]
-            && $card['rows'][0] === ['label' => 'Estimated resale', 'value' => '$20–$35']
-            && $card['summary'] === 'Sells steadily. See a guide.');
+        ->assertNativeCalled('ThriftyCamera.ShareFindCard', function (array $card) use ($lamp) {
+            $labels = array_column($card['rows'], 'value', 'label');
+
+            return $card['title'] === 'Brass lamp'
+                && $card['subtitle'] === 'Lighting · 91% confidence'
+                && str_ends_with($card['imagePath'], 'frames/frame.jpg')
+                && $card['box'] === ['xMin' => 100, 'yMin' => 125, 'xMax' => 600, 'yMax' => 800]
+                && $card['boxes'] === [
+                    ['xMin' => 100, 'yMin' => 125, 'xMax' => 600, 'yMax' => 800, 'selected' => true],
+                    ['xMin' => 700, 'yMin' => 0, 'xMax' => 1000, 'yMax' => 400, 'selected' => false],
+                ]
+                && $card['rows'][0] === ['label' => 'Estimated resale', 'value' => '$20–$35']
+                && $labels['Brand'] === 'Stiffel'
+                && $labels['Model'] === 'Unknown'
+                && $labels['Seen'] === '3 times'
+                && $labels['Sold · Comp 1'] === '$10'
+                && $labels['Sold · Comp 3'] === '$30'
+                && ! isset($labels['Sold · Comp 4'])
+                && str_starts_with($card['summary'], $lamp->description)
+                && str_ends_with($card['summary'], 'Sells steadily. See a guide.');
+        });
+});
+
+it('shares without boxes when only the thumbnail is left', function () {
+    $item = Item::factory()->create(['thumbnail_path' => 'thumbs/x.jpg']);
+
+    itemDetail($item)
+        ->press('share')
+        ->assertNativeCalled('ThriftyCamera.ShareFindCard', fn (array $card) => $card['box'] === null
+            && $card['boxes'] === []
+            && str_ends_with($card['imagePath'], 'thumbs/x.jpg'));
 });
 
 it('deletes the find after confirmation and goes back', function () {

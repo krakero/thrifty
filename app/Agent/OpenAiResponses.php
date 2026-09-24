@@ -58,15 +58,6 @@ class OpenAiResponses
         return $body;
     }
 
-    /**
-     * Whether a failed request was rejected because of the tool configuration (used to fall back to older web search shapes).
-     */
-    public static function isToolConfigurationError(AnalysisFailed $exception): bool
-    {
-        return $exception->getCode() === 400
-            && preg_match('/web_search|external_web_access|search_context_size|tools\[/i', $exception->getMessage()) === 1;
-    }
-
     private static function errorMessage(Response $response): string
     {
         $message = $response->json('error.message');

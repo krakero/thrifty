@@ -50,17 +50,18 @@ Return an empty items array when no object passes every inclusion rule. Currency
 TEXT;
 
     /**
-     * Hosted web search tool shapes, newest first; older shapes are used if the API rejects a newer one.
+     * The hosted web search tool exactly as the Agents SDK serializes `webSearchTool({ searchContextSize: 'low', externalWebAccess: true })`.
      *
-     * @var list<array<string, mixed>>
+     * @var array<string, mixed>
      */
-    private const WebSearchTools = [
-        ['type' => 'web_search', 'search_context_size' => 'low', 'external_web_access' => true],
-        ['type' => 'web_search', 'search_context_size' => 'low'],
-        ['type' => 'web_search_preview', 'search_context_size' => 'low'],
-    ];
+    public const WebSearchTool = ['type' => 'web_search', 'search_context_size' => 'low', 'external_web_access' => true];
 
-    private static int $webSearchTool = 0;
+    /**
+     * The Agents SDK's default model settings for `gpt-5.6-luna`: no reasoning effort and low text verbosity.
+     */
+    public const ReasoningEffort = 'none';
+
+    public const TextVerbosity = 'low';
 
     public function __construct(
         private OpenAiResponses $responses,
@@ -219,39 +220,32 @@ TEXT;
     }
 
     /**
+     * Request one model turn. Later turns chain on the previous response (stored server-side for the API's default
+     * 30 days, as with the Agents SDK), so its reasoning items carry over without re-uploading the frame.
+     *
      * @param  list<array<string, mixed>>  $input
      * @return array<string, mixed>
      */
     private function createResponse(string $apiKey, array $input, ?string $previousResponseId, bool $withEbay): array
     {
-        while (true) {
-            $payload = [
-                'model' => self::Model,
-                'instructions' => self::Instructions,
-                'input' => $input,
-                'tools' => array_values(array_filter([
-                    PreviousScans::toolDefinition(),
-                    self::WebSearchTools[self::$webSearchTool],
-                    $withEbay ? EbayListings::toolDefinition() : null,
-                ])),
-                'parallel_tool_calls' => true,
-                'text' => ['format' => FrameAnalysisSchema::textFormat()],
-            ];
+        $payload = [
+            'model' => self::Model,
+            'instructions' => self::Instructions,
+            'input' => $input,
+            'tools' => array_values(array_filter([
+                PreviousScans::toolDefinition(),
+                self::WebSearchTool,
+                $withEbay ? EbayListings::toolDefinition() : null,
+            ])),
+            'reasoning' => ['effort' => self::ReasoningEffort],
+            'text' => ['verbosity' => self::TextVerbosity, 'format' => FrameAnalysisSchema::textFormat()],
+        ];
 
-            if ($previousResponseId !== null) {
-                $payload['previous_response_id'] = $previousResponseId;
-            }
-
-            try {
-                return $this->responses->create($apiKey, $payload);
-            } catch (AnalysisFailed $exception) {
-                if (! OpenAiResponses::isToolConfigurationError($exception) || self::$webSearchTool >= count(self::WebSearchTools) - 1) {
-                    throw $exception;
-                }
-
-                self::$webSearchTool++;
-            }
+        if ($previousResponseId !== null) {
+            $payload['previous_response_id'] = $previousResponseId;
         }
+
+        return $this->responses->create($apiKey, $payload);
     }
 
     /**

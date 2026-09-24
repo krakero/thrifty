@@ -10,7 +10,7 @@ use InvalidArgumentException;
  */
 class FrameAnalysisSchema
 {
-    public const Name = 'frame_analysis';
+    public const Name = 'output';
 
     public const MaxItems = 20;
 

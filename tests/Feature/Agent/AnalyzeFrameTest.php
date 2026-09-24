@@ -255,7 +255,7 @@ it('runs the tool loop, persists finds and records a sanitized audit', function 
         ->and(collect($first['tools'])->map(fn ($tool) => $tool['name'] ?? $tool['type'])->all())
         ->toBe(['check_previous_scans', 'web_search', 'search_ebay_active_listings'])
         ->and($first['tools'][1])->toMatchArray(['search_context_size' => 'low'])
-        ->and($first['text']['format'])->toMatchArray(['type' => 'json_schema', 'name' => 'frame_analysis', 'strict' => true])
+        ->and($first['text']['format'])->toMatchArray(['type' => 'json_schema', 'name' => 'output', 'strict' => true])
         ->and($first)->not->toHaveKey('previous_response_id');
     expect($second['previous_response_id'])->toBe('resp_1')
         ->and(collect($second['input'])->pluck('call_id')->all())->toBe(['call_prev', 'call_ebay'])
@@ -466,20 +466,28 @@ it('reports tool errors back to the model instead of failing', function () {
     expect(openAiRequests()[1]['input'][0]['output'])->toContain('Tool search_ebay_active_listings not found.');
 });
 
-it('falls back to an older web search tool shape when the API rejects the newer one', function () {
+it('sends the request the Agents SDK sent, chaining later turns on the previous response', function () {
     agentFrame();
     fakeOpenAi([
-        ['httpStatus' => 400, 'httpBody' => ['error' => ['message' => "Unknown parameter: 'tools[1].external_web_access'.", 'param' => 'tools[1].external_web_access']]],
+        agentResponse('resp_1', [agentFunctionCall('check_previous_scans', ['candidates' => [agentCandidate()]], 'call_1')]),
         agentFinalResponse([]),
     ]);
 
     analyze($this->session->id);
 
     [$first, $second] = openAiRequests();
-    expect($first['tools'][1])->toHaveKey('external_web_access')
-        ->and($second['tools'][1])->toBe(['type' => 'web_search', 'search_context_size' => 'low']);
-})->after(function () {
-    (new ReflectionProperty(FrameAgent::class, 'webSearchTool'))->setValue(null, 0);
+    expect(array_keys($first))->toBe(['model', 'instructions', 'input', 'tools', 'reasoning', 'text'])
+        ->and($first['tools'][1])->toBe(['type' => 'web_search', 'search_context_size' => 'low', 'external_web_access' => true])
+        ->and($first['reasoning'])->toBe(['effort' => 'none'])
+        ->and($first['text']['verbosity'])->toBe('low')
+        ->and($first['text']['format'])->toMatchArray(['type' => 'json_schema', 'name' => 'output', 'strict' => true])
+        ->and($first)->not->toHaveKeys(['store', 'include', 'parallel_tool_calls']);
+    expect($second['previous_response_id'])->toBe('resp_1')
+        ->and($second['instructions'])->toBe(FrameAgent::Instructions)
+        ->and($second['tools'])->toBe($first['tools'])
+        ->and($second['input'])->toHaveCount(1)
+        ->and(array_keys($second['input'][0]))->toBe(['type', 'call_id', 'output'])
+        ->and($second['input'][0]['output'])->toBeString();
 });
 
 it('dispatches as an async task with a long timeout and returns a JSON-safe result', function () {

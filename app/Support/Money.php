@@ -16,9 +16,15 @@ class Money
         }
 
         $symbol = match (strtoupper($currency)) {
-            'USD', 'CAD', 'AUD' => '$',
+            'USD', 'CAD', 'AUD', 'NZD', 'MXN', 'HKD', 'SGD' => '$',
             'EUR' => '€',
             'GBP' => '£',
+            'JPY', 'CNY' => '¥',
+            'INR' => '₹',
+            'KRW' => '₩',
+            'PHP' => '₱',
+            'ILS' => '₪',
+            'NGN' => '₦',
             default => strtoupper($currency).' ',
         };
 

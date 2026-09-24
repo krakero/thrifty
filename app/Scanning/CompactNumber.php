@@ -16,7 +16,9 @@ class CompactNumber
                 $scaled = $value / $unit;
                 $decimals = abs($scaled) < 10 ? 1 : 0;
 
-                return rtrim(rtrim(number_format($scaled, $decimals, '.', ''), '0'), '.').$suffix;
+                $formatted = number_format($scaled, $decimals, '.', '');
+
+                return (str_ends_with($formatted, '.0') ? substr($formatted, 0, -2) : $formatted).$suffix;
             }
         }
 

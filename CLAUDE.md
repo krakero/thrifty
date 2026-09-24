@@ -204,8 +204,7 @@ install must follow all three steps:
 3. `php artisan native:plugin:register vendor/plugin-name` — adds it to the `NativeServiceProvider`
 4. `php artisan native:plugin:list` — verify it shows as registered
 
-Then tell the user to rebuild with `php artisan native:run` (native code only compiles in at build time — do not
-run this yourself). If `native:run` warns "The following plugins are installed but not registered", go back to
+Then rebuild with `php artisan native:run` (native code only compiles in at build time). If `native:run` warns "The following plugins are installed but not registered", go back to
 step 3.
 
 ### Database Seeding — Always via Migrations
@@ -217,10 +216,9 @@ the data, still create it — but invoke it **from the migration's `up()`** (e.g
 never rely on `db:seed` being run. Seed migrations must be safe for both fresh installs and updates of existing
 user databases.
 
-### Build Commands — Tell the User, Never Run
+### Build Commands
 
-**CRITICAL: Never execute any of these commands yourself. Always instruct the user to run them manually in their
-terminal.**
+You may run these yourself (e.g. to build for the iOS simulator and test the app with `idb`).
 
 | Command | Purpose |
 |---|---|
@@ -237,11 +235,7 @@ Notes:
   uses JS/CSS HMR. Native UI screens hot-reload without Vite.
 - `npm run build -- --mode=ios|android` is only needed for apps with web-view assets — not for native UI screens.
 
-**Always ask which platform before giving any build or run command.** If the user hasn't specified iOS or Android,
-ask: "Which platform do you want to build/test on — iOS or Android?" Never assume a platform.
-
-When the platform is confirmed, give the relevant command(s) above and tell the user to run it in their terminal.
-Do not run it yourself.
+This app targets iOS only, so default to iOS.
 
 === nativephp/mobile-browser rules ===
 

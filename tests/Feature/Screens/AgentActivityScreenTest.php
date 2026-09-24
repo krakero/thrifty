@@ -91,6 +91,7 @@ it('shows a failed run with its error and no events', function () {
 
     agentActivity($item)
         ->assertSee('Failed')
+        ->assertSee('Failed at')
         ->assertSee('The model did not return valid findings.')
         ->assertSee('No agent events were recorded.');
 });

@@ -43,7 +43,7 @@
                     <text class="text-xs text-theme-on-surface">{{ LocalTime::format($run->captured_at, 'M j, Y, g:i:s A') }}</text>
                 </row>
                 <row class="w-full items-center">
-                    <text class="text-xs text-theme-on-surface-variant">Completed</text>
+                    <text class="text-xs text-theme-on-surface-variant">{{ $status['label'] === 'Failed' ? 'Failed at' : 'Completed' }}</text>
                     <spacer />
                     <text class="text-xs text-theme-on-surface">{{ LocalTime::format($run->completed_at, 'M j, Y, g:i:s A') }}</text>
                 </row>

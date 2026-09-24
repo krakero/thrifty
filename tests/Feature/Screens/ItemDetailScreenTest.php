@@ -4,8 +4,11 @@ use App\Enums\ValuationSourceType;
 use App\Models\FrameRun;
 use App\Models\Item;
 use App\Models\ValuationSource;
+use App\NativeComponents\AgentActivity;
 use App\NativeComponents\ItemDetail;
 use App\NativeComponents\Layouts\StackLayout;
+use App\NativeComponents\Scan;
+use App\Scanning\LiveScanState;
 use App\Support\LocalTime;
 use Illuminate\Support\Facades\Storage;
 use Native\Mobile\Events\Alert\ButtonPressed;
@@ -295,4 +298,29 @@ it('shares and deletes using the find as it is now, not as last rendered', funct
 
     $screen->instance()->confirmDelete();
     $screen->assertNativeCalled('Dialog.Alert', fn (array $params) => str_contains($params['message'], 'Brass lamp (seen again)'));
+});
+
+it('settles a scan analysis that finishes while a find is on top of Scan, streaming it into the feed with a chime', function () {
+    [, $lamp] = frameWithTwoFinds();
+    $newFind = Item::factory()->create();
+    $state = app(LiveScanState::class);
+    $state->pending['task-1'] = ['sessionId' => 'session', 'frameRunId' => 'run', 'dispatchedAt' => time()];
+
+    itemDetail($lamp, 'scan')
+        ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-1', 'status' => 'finished', 'result' => ['itemIds' => [$newFind->id]]])
+        ->assertNativeCalled('ThriftyCamera.Chime');
+
+    expect($state->pending)->toBe([])
+        ->and([...$state->liveItemIds, ...$state->revealQueue])->toContain($newFind->id);
+});
+
+it('lets agent activity settle scan analyses too', function () {
+    $state = app(LiveScanState::class);
+    $state->pending['task-2'] = ['sessionId' => 'session', 'frameRunId' => 'run', 'dispatchedAt' => time()];
+
+    Native::test(AgentActivity::class, ['id' => Item::factory()->create()->id], [], StackLayout::class)
+        ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'task-2', 'status' => 'finished', 'result' => ['itemIds' => []]])
+        ->assertNativeNotCalled('ThriftyCamera.Chime');
+
+    expect($state->pending)->toBe([]);
 });

@@ -5,6 +5,7 @@ namespace App\NativeComponents;
 use App\Enums\FrameRunStatus;
 use App\Models\FrameRun;
 use App\Models\Item;
+use App\Scanning\ReceivesFrameAnalyses;
 use Illuminate\View\View;
 use Native\Mobile\Edge\NativeComponent;
 
@@ -13,6 +14,8 @@ use Native\Mobile\Edge\NativeComponent;
  */
 class AgentActivity extends NativeComponent
 {
+    use ReceivesFrameAnalyses;
+
     /** Longer audit values are cut so a huge raw response can't stall the native renderer. */
     public const MAX_BLOCK_LENGTH = 20000;
 

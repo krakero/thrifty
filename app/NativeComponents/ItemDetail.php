@@ -7,6 +7,7 @@ use App\Icons\Android;
 use App\Icons\Ios;
 use App\Models\Item;
 use App\Models\ValuationSource;
+use App\Scanning\ReceivesFrameAnalyses;
 use App\Support\LocalTime;
 use App\Support\Money;
 use Closure;
@@ -29,6 +30,8 @@ use Thrifty\Camera\Facades\ThriftyCamera;
  */
 class ItemDetail extends NativeComponent
 {
+    use ReceivesFrameAnalyses;
+
     /** Web results linked from the value summary, as Markdown links. */
     private const MARKDOWN_LINK = '/\[([^\]]+)]\((https?:\/\/[^)]+)\)/';
 

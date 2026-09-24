@@ -16,6 +16,22 @@ iOS-only camera plugin for Thrifty: live scanning preview, snapshots, video fram
 - A snapshot waits up to 4s for the first frame, so a Snap that also turns the camera on still captures.
 - The camera only runs while the preview is on screen and the app is in the foreground.
 
+### Accessible pressable
+
+Use `<native:thrifty-pressable>` instead of `<native:pressable>` for anything interactive. It takes the same attributes (`@press`, `@longPress`, `@navigate`, `press-scale` / `press-opacity` / `press-translate-y`, `:menu`, `class`, `ref`) plus `a11y-label` / `a11y-hint`, and renders on iOS as a real SwiftUI Button:
+
+- VoiceOver sees one labelled button (the children's text is combined when there's no `a11y-label`), activated like a tap. A long press is offered as a named action.
+- Dragging that starts on it scrolls the enclosing scroll view. The core pressable's press feedback uses a DragGesture that blocks panning.
+- In tests, `->tap('ref')` / `->longPress('ref')` / text lookups work as with `<native:pressable>`. The callbacks live in `props.on_press` / `props.on_long_press`, and press feedback in `props.feedback_*`. The node-level `on_press` is always absent.
+
+@verbatim
+<code-snippet name="Accessible pressable" lang="blade">
+<native:thrifty-pressable ref="open-settings" @navigate="'/settings'" press-scale="0.96" a11y-label="Open settings" class="w-11 h-11 items-center justify-center">
+    <native:icon :ios="Ios::Gearshape" :android="Android::Settings" />
+</native:thrifty-pressable>
+</code-snippet>
+@endverbatim
+
 ### Facade
 
 @verbatim

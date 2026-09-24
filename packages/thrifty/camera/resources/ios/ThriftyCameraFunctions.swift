@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import ImageIO
+import LinkPresentation
 import UIKit
 
 // MARK: - ThriftyCamera Function Namespace
@@ -147,7 +148,9 @@ enum ThriftyCameraFunctions {
                         return
                     }
 
-                    let sheet = UIActivityViewController(activityItems: [image], applicationActivities: nil)
+                    let title = card.title.isEmpty ? "Thrifty find" : card.title
+                    let item = ThriftyFindCardItemSource(image: image, title: title)
+                    let sheet = UIActivityViewController(activityItems: [item], applicationActivities: nil)
 
                     if let popover = sheet.popoverPresentationController {
                         popover.sourceView = presenter.view
@@ -496,5 +499,41 @@ final class ThriftyPlaybackClock {
                 pausedSince = nil
             }
         }
+    }
+}
+
+// MARK: - Share sheet item
+
+/// Shares the rendered card image and gives the share sheet a proper header
+/// (the find's title and the card as its thumbnail) instead of the generic
+/// placeholder.
+final class ThriftyFindCardItemSource: NSObject, UIActivityItemSource {
+    private let image: UIImage
+    private let title: String
+
+    init(image: UIImage, title: String) {
+        self.image = image
+        self.title = title
+    }
+
+    func activityViewControllerPlaceholderItem(_ activityViewController: UIActivityViewController) -> Any {
+        image
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController, itemForActivityType activityType: UIActivity.ActivityType?) -> Any? {
+        image
+    }
+
+    func activityViewController(_ activityViewController: UIActivityViewController, subjectForActivityType activityType: UIActivity.ActivityType?) -> String {
+        title
+    }
+
+    func activityViewControllerLinkMetadata(_ activityViewController: UIActivityViewController) -> LPLinkMetadata? {
+        let metadata = LPLinkMetadata()
+        metadata.title = title
+        metadata.iconProvider = NSItemProvider(object: image)
+        metadata.imageProvider = NSItemProvider(object: image)
+
+        return metadata
     }
 }

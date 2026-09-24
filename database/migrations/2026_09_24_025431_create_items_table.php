@@ -13,8 +13,8 @@ return new class extends Migration
     {
         Schema::create('items', function (Blueprint $table) {
             $table->ulid('id')->primary();
-            $table->foreignUlid('scan_session_id')->constrained()->cascadeOnDelete();
-            $table->foreignUlid('frame_run_id')->nullable();
+            $table->foreignUlid('scan_session_id')->index()->constrained()->cascadeOnDelete();
+            $table->foreignUlid('frame_run_id')->nullable()->index();
             $table->string('fingerprint')->unique();
             $table->string('name');
             $table->string('category');

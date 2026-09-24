@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('valuation_sources', function (Blueprint $table) {
             $table->ulid('id')->primary();
-            $table->foreignUlid('item_id')->constrained()->cascadeOnDelete();
+            $table->foreignUlid('item_id')->index()->constrained()->cascadeOnDelete();
             $table->string('source_type');
             $table->string('title');
             $table->text('url')->nullable();

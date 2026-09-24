@@ -13,8 +13,8 @@ return new class extends Migration
     {
         Schema::create('frame_runs', function (Blueprint $table) {
             $table->ulid('id')->primary();
-            $table->foreignUlid('scan_session_id')->constrained()->cascadeOnDelete();
-            $table->string('frame_path')->nullable();
+            $table->foreignUlid('scan_session_id')->index()->constrained()->cascadeOnDelete();
+            $table->string('frame_path')->nullable()->index();
             $table->timestamp('captured_at');
             $table->timestamp('completed_at')->nullable();
             $table->unsignedInteger('latency_ms');

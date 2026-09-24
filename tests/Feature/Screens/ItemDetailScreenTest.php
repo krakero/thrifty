@@ -10,6 +10,7 @@ use App\NativeComponents\Layouts\StackLayout;
 use App\NativeComponents\Scan;
 use App\Scanning\LiveScanState;
 use App\Support\LocalTime;
+use App\Support\PriceText;
 use Illuminate\Support\Facades\Storage;
 use Native\Mobile\Events\Alert\ButtonPressed;
 use Native\Mobile\Testing\Native;
@@ -69,8 +70,8 @@ it('shows the find, its frame mates, prices and facts', function () {
         ->assertSee('Oak chair')
         ->assertSee('Lighting · 91% confidence')
         ->assertSee('Brass lamp')
-        ->assertSee('Seen 3×')
-        ->assertSee('$20–$35')
+        ->assertSee(PriceText::keepTogether('Seen 3×'))
+        ->assertSee(PriceText::keepTogether('$20–$35'))
         ->assertSee('$120')
         ->assertSee('$42')
         ->assertSee('$30')
@@ -127,7 +128,7 @@ it('draws a box for every find in the frame, split by flex-grow ratios', functio
 
     $screen->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === "box-{$chair->id}")
         ->assertElement('column', fn (array $node) => ($node['layout']['flex_grow'] ?? null) === 500.0
-            && ($node['children'][0]['style']['border_width'] ?? null) === 3.0
+            && ($node['children'][0]['style']['border_width'] ?? null) === 4.0
             && ($node['children'][0]['ref'] ?? null) === "box-{$lamp->id}");
 });
 
@@ -200,7 +201,7 @@ it('lists comparables with their type and opens linked ones in the in-app browse
         ->assertSee('a guide')
         ->tap('source-0')
         ->assertNativeCalled('Browser.OpenInApp', fn (array $params) => $params['url'] === 'https://ebay.com/itm/1')
-        ->tap('source-1')
+        ->assertMissingElement('pressable', fn (array $node) => ($node['ref'] ?? null) === 'source-1')
         ->assertNativeCalledTimes('Browser.OpenInApp', 1)
         ->tap('source-2')
         ->assertNativeCalled('Browser.OpenInApp', fn (array $params) => $params['url'] === 'https://example.com/guide');
@@ -323,4 +324,33 @@ it('lets agent activity settle scan analyses too', function () {
         ->assertNativeNotCalled('ThriftyCamera.Chime');
 
     expect($state->pending)->toBe([]);
+});
+
+it('stacks boxes largest first so smaller boxes stay tappable, even under a selected large box', function () {
+    [$run, $lamp, $chair] = frameWithTwoFinds();
+    $wholeFrame = Item::factory()->for($run)->create(['box_x_min' => 0, 'box_y_min' => 0, 'box_x_max' => 1000, 'box_y_max' => 1000]);
+
+    $layers = function ($screen): array {
+        $refs = [];
+        $walk = function (array $node) use (&$walk, &$refs): void {
+            if (str_starts_with($node['ref'] ?? '', 'box-layer-')) {
+                $refs[] = substr($node['ref'], strlen('box-layer-'));
+            }
+            foreach ($node['children'] ?? [] as $child) {
+                $walk($child);
+            }
+        };
+        $walk($screen->tree());
+
+        return $refs;
+    };
+
+    $expected = [$wholeFrame->id, $lamp->id, $chair->id];
+
+    expect($layers(itemDetail($wholeFrame)))->toBe($expected)
+        ->and($layers(itemDetail($chair)))->toBe($expected);
+
+    itemDetail($wholeFrame)
+        ->tap("box-{$chair->id}")
+        ->assertSet('itemId', $chair->id);
 });

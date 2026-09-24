@@ -10,13 +10,18 @@
     grow-0 slot measures at SwiftUI's default 10pt and shifts an edge-touching box. The box itself always gets a grow of
     at least 1 (0.1% of the frame) for the same reason.
 
+    Later layers are hit-tested first, so boxes are drawn largest first: a small box inside a big one stays tappable, and
+    the selected box is never raised above smaller ones (its thicker outline and tint mark it instead).
+
     @var \Illuminate\Support\Collection<int, \App\Models\Item> $items
     @var string $activeItemId
     @var array{path: string, annotated: bool, aspectRatio: float} $frame
 --}}
 @php
     $boxed = $frame['annotated']
-        ? $items->filter(fn ($frameItem) => $frameItem->boundingBox() !== null)->sortBy(fn ($frameItem) => $frameItem->id === $activeItemId)
+        ? $items->filter(fn ($frameItem) => $frameItem->boundingBox() !== null)
+            ->sortByDesc(fn ($frameItem) => \App\NativeComponents\ItemDetail::boxArea($frameItem->boundingBox()))
+            ->values()
         : collect();
 @endphp
 
@@ -42,7 +47,7 @@
                         @press="selectItem('{{ $frameItem->id }}')"
                         a11y-label="{{ $frameItem->name }}"
                         a11y-hint="{{ $isActive ? 'Selected find' : 'Shows this find' }}"
-                        class="w-full h-full rounded-[5] {{ $isActive ? 'border-theme-primary border-[3] bg-theme-primary/15' : 'border-white/70 border-[2]' }}"
+                        class="w-full h-full rounded-[5] {{ $isActive ? 'border-theme-primary border-[4] bg-theme-primary/15' : 'border-white/70 border-[2]' }}"
                     />
                 </column>
                 @if ($box['right'] > 0)

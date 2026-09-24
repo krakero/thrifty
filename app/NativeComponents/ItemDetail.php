@@ -10,6 +10,7 @@ use App\Models\ValuationSource;
 use App\Scanning\ReceivesFrameAnalyses;
 use App\Support\LocalTime;
 use App\Support\Money;
+use App\Support\PriceText;
 use Closure;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Storage;
@@ -31,9 +32,6 @@ use Thrifty\Camera\Facades\ThriftyCamera;
 class ItemDetail extends NativeComponent
 {
     use ReceivesFrameAnalyses;
-
-    /** Web results linked from the value summary, as Markdown links. */
-    private const MARKDOWN_LINK = '/\[([^\]]+)]\((https?:\/\/[^)]+)\)/';
 
     private const MAX_SOURCES = 8;
 
@@ -222,6 +220,7 @@ class ItemDetail extends NativeComponent
             'frameItems' => $frameItems,
             'frame' => $this->frameImage($item),
             'priceRows' => $this->priceRows($item),
+            'frameChips' => $frameItems->sortBy(fn (Item $frameItem): int => $frameItem->id === $item->id ? 0 : 1)->values(),
             'evidence' => $this->marketEvidence(),
             'summary' => $this->plainSummary($item),
             'confidence' => $this->confidence($item),
@@ -254,6 +253,16 @@ class ItemDetail extends NativeComponent
             'top' => $top, 'height' => $bottom - $top, 'bottom' => 1000 - $bottom,
             'left' => $left, 'width' => $right - $left, 'right' => 1000 - $right,
         ];
+    }
+
+    /**
+     * @param  array{xMin: int, yMin: int, xMax: int, yMax: int}  $box
+     */
+    public static function boxArea(array $box): int
+    {
+        $ratios = self::boxRatios($box);
+
+        return $ratios['width'] * $ratios['height'];
     }
 
     private function item(): ?Item
@@ -332,8 +341,8 @@ class ItemDetail extends NativeComponent
         return [
             ['label' => 'Estimated resale', 'value' => Money::resaleRange($item), 'tone' => 'accent'],
             ['label' => 'Tag price', 'value' => Money::format($item->observed_price_cents, $item->currency), 'tone' => 'primary'],
-            ['label' => 'Estimated retail', 'value' => Money::format($item->retail_price_cents, $item->currency), 'tone' => 'plain'],
-            ['label' => 'Active listings', 'value' => Money::format($item->active_price_cents, $item->currency), 'tone' => 'plain'],
+            ['label' => 'Retail', 'value' => Money::format($item->retail_price_cents, $item->currency), 'tone' => 'plain'],
+            ['label' => 'Active', 'value' => Money::format($item->active_price_cents, $item->currency), 'tone' => 'plain'],
             ['label' => 'Sold', 'value' => Money::format($item->sold_price_cents, $item->currency), 'tone' => 'plain'],
         ];
     }
@@ -375,7 +384,7 @@ class ItemDetail extends NativeComponent
 
         $knownUrls = array_filter(array_column($evidence, 'url'));
 
-        preg_match_all(self::MARKDOWN_LINK, $item->value_summary, $matches, PREG_SET_ORDER);
+        preg_match_all(PriceText::MARKDOWN_LINK, $item->value_summary, $matches, PREG_SET_ORDER);
 
         foreach ($matches as [, $title, $url]) {
             if (in_array($url, $knownUrls, true)) {
@@ -394,7 +403,7 @@ class ItemDetail extends NativeComponent
      */
     private function plainSummary(Item $item): string
     {
-        return preg_replace(self::MARKDOWN_LINK, '$1', $item->value_summary) ?? $item->value_summary;
+        return PriceText::plainSummary($item->value_summary);
     }
 
     private function confidence(Item $item): string

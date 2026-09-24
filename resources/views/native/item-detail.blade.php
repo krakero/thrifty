@@ -10,6 +10,7 @@
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
 @use('App\Support\Money')
+@use('App\Support\PriceText')
 
 @if ($item === null)
     <column class="w-full h-full items-center justify-center gap-3 p-8 bg-theme-background">
@@ -27,7 +28,7 @@
                 <row class="w-full items-center gap-3 rounded-xl bg-theme-destructive/15 border border-theme-destructive/40 p-3">
                     <icon :ios="Ios::ExclamationmarkTriangleFill" :android="Android::Warning" :size="18" class="text-theme-destructive" />
                     <text class="flex-1 text-sm text-theme-on-surface">{{ $error }}</text>
-                    <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[32] h-[32] items-center justify-center">
+                    <pressable ref="dismiss-error" @press="dismissError" a11y-label="Dismiss error" class="w-[44] h-[44] items-center justify-center">
                         <icon :ios="Ios::Xmark" :android="Android::Close" :size="14" class="text-theme-on-surface-variant" />
                     </pressable>
                 </row>
@@ -39,27 +40,27 @@
                 </text>
                 <scroll-view axis="horizontal" :shows-indicators="false" class="w-full">
                     <row class="gap-2">
-                        @foreach ($frameItems as $frameItem)
+                        @foreach ($frameChips as $frameItem)
                             @php
                                 $isActive = $frameItem->id === $item->id;
                             @endphp
                             <pressable
                                 ref="frame-item-{{ $frameItem->id }}"
                                 @press="selectItem('{{ $frameItem->id }}')"
-                                :press-scale="0.97"
-                                a11y-label="{{ $frameItem->name }}, {{ Money::resaleRange($frameItem) }}"
+                                a11y-label="{{ $frameItem->name }}, resale {{ Money::resaleRange($frameItem) }}"
+                                a11y-hint="{{ $isActive ? 'Selected find' : 'Shows this find' }}"
                                 class="w-[168] gap-1 rounded-xl p-3 border {{ $isActive ? 'bg-theme-primary/15 border-theme-primary' : 'bg-theme-surface border-theme-outline' }}"
                             >
                                 <text class="text-[11] uppercase text-theme-on-surface-variant" :max-lines="1">{{ $frameItem->category }}</text>
                                 <text font="semibold" class="text-sm text-theme-on-surface" :max-lines="1">{{ $frameItem->name }}</text>
-                                <text font="mono" class="text-sm text-theme-accent">{{ Money::resaleRange($frameItem) }}</text>
+                                <text font="mono" class="text-sm text-theme-accent" :max-lines="1">{{ PriceText::keepTogether(Money::resaleRange($frameItem)) }}</text>
                             </pressable>
                         @endforeach
                     </row>
                 </scroll-view>
             </column>
 
-            <pressable ref="agent-activity" @press="openActivity" :press-scale="0.98" a11y-hint="Shows what the agent did to value this frame" class="w-full rounded-xl bg-theme-surface border border-theme-outline px-4 py-3">
+            <pressable ref="agent-activity" @press="openActivity" a11y-label="Agent activity" a11y-hint="Shows what the agent did to value this frame" class="w-full rounded-xl bg-theme-surface border border-theme-outline px-4 py-3">
                 <row class="w-full items-center gap-3">
                     <icon :ios="Ios::Cpu" :android="Android::SmartToy" :size="18" class="text-theme-primary" />
                     <text font="semibold" class="flex-1 text-sm text-theme-on-surface">Agent activity</text>
@@ -72,7 +73,7 @@
                 <text font="display" class="text-2xl text-theme-on-background">{{ $item->name }}</text>
                 <row class="w-full items-center gap-2">
                     @if ($item->isRepeat())
-                        <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 py-1 text-xs text-theme-primary">Seen {{ $item->seen_count }}×</text>
+                        <text font="semibold" class="rounded-full bg-theme-primary/20 px-2 py-1 text-xs text-theme-primary" :max-lines="1">{{ PriceText::keepTogether('Seen '.$item->seen_count.'×') }}</text>
                     @endif
                     <text class="rounded-full bg-theme-surface-variant px-2 py-1 text-xs text-theme-on-surface">{{ $item->condition }}</text>
                 </row>
@@ -80,22 +81,23 @@
             </column>
 
             <column class="w-full gap-3 rounded-2xl bg-theme-surface border border-theme-outline p-4">
-                <row class="w-full gap-3">
-                    @foreach (array_slice($priceRows, 0, 2) as $row)
-                        <column class="flex-1 gap-1 rounded-xl p-3 {{ $row['tone'] === 'accent' ? 'bg-theme-accent/15' : 'bg-theme-primary/15' }}">
-                            <text class="text-[11] uppercase {{ $row['tone'] === 'accent' ? 'text-theme-accent' : 'text-theme-primary' }}">{{ $row['label'] }}</text>
-                            <text font="mono" class="text-xl {{ $row['tone'] === 'accent' ? 'text-theme-accent' : 'text-theme-primary' }}">{{ $row['value'] }}</text>
-                        </column>
-                    @endforeach
-                </row>
-                <row class="w-full gap-3">
-                    @foreach (array_slice($priceRows, 2) as $row)
-                        <column class="flex-1 gap-1 rounded-xl bg-theme-surface-variant p-3">
-                            <text class="text-[11] uppercase text-theme-on-surface-variant" :max-lines="1">{{ $row['label'] }}</text>
-                            <text font="mono" class="text-base text-theme-on-surface">{{ $row['value'] }}</text>
-                        </column>
-                    @endforeach
-                </row>
+                @php
+                    [$resale, $tag] = array_slice($priceRows, 0, 2);
+                @endphp
+                <column class="w-full gap-1 rounded-xl bg-theme-accent/15 p-3">
+                    <text class="text-[11] uppercase text-theme-accent" :max-lines="1">{{ $resale['label'] }}</text>
+                    <text font="mono" class="text-2xl text-theme-accent" :max-lines="1">{{ PriceText::keepTogether($resale['value']) }}</text>
+                </column>
+                @foreach (array_chunk([$tag, ...array_slice($priceRows, 2)], 2) as $pair)
+                    <row class="w-full gap-3">
+                        @foreach ($pair as $row)
+                            <column class="flex-1 gap-1 rounded-xl p-3 {{ $row['tone'] === 'primary' ? 'bg-theme-primary/15' : 'bg-theme-surface-variant' }}">
+                                <text class="text-[11] uppercase {{ $row['tone'] === 'primary' ? 'text-theme-primary' : 'text-theme-on-surface-variant' }}" :max-lines="1">{{ $row['label'] }}</text>
+                                <text font="mono" class="text-base {{ $row['tone'] === 'primary' ? 'text-theme-primary' : 'text-theme-on-surface' }}" :max-lines="1">{{ PriceText::keepTogether($row['value']) }}</text>
+                            </column>
+                        @endforeach
+                    </row>
+                @endforeach
                 @if ($summary !== '')
                     <text class="text-sm leading-relaxed text-theme-on-surface-variant">{{ $summary }}</text>
                 @endif
@@ -107,28 +109,26 @@
                     @foreach ($evidence as $index => $comparable)
                         @php
                             $typeClass = match ($comparable['type']) {
-                                'sold' => 'bg-theme-accent/20 text-theme-accent',
-                                'active' => 'bg-theme-primary/20 text-theme-primary',
-                                default => 'bg-theme-surface-variant text-theme-on-surface-variant',
+                                'sold' => ['bg-theme-accent/20', 'text-theme-accent'],
+                                'active' => ['bg-theme-primary/20', 'text-theme-primary'],
+                                default => ['bg-theme-surface-variant', 'text-theme-on-surface-variant'],
                             };
                         @endphp
-                        <pressable
-                            ref="source-{{ $index }}"
-                            @press="openSource({{ $index }})"
-                            :press-scale="$comparable['url'] !== null ? 0.98 : 1"
-                            a11y-label="{{ $comparable['type'] }}: {{ $comparable['title'] }}, {{ $comparable['price'] }}"
-                            a11y-hint="{{ $comparable['url'] !== null ? 'Opens the listing' : '' }}"
-                            class="w-full rounded-xl bg-theme-surface border border-theme-outline px-3 py-3"
-                        >
-                            <row class="w-full items-center gap-3">
-                                <text font="semibold" class="rounded-md px-2 py-1 text-[10] uppercase {{ $typeClass }}">{{ $comparable['type'] }}</text>
-                                <text class="flex-1 text-sm text-theme-on-surface" :max-lines="2">{{ $comparable['title'] }}</text>
-                                <text font="mono" class="text-sm text-theme-on-surface">{{ $comparable['price'] }}</text>
-                                @if ($comparable['url'] !== null)
-                                    <icon :ios="Ios::ArrowUpRight" :android="Android::OpenInNew" :size="14" class="text-theme-on-surface-variant" />
-                                @endif
-                            </row>
-                        </pressable>
+                        @if ($comparable['url'] !== null)
+                            <pressable
+                                ref="source-{{ $index }}"
+                                @press="openSource({{ $index }})"
+                                a11y-label="{{ $comparable['type'] }}: {{ $comparable['title'] }}, {{ $comparable['price'] }}"
+                                a11y-hint="Opens the listing"
+                                class="w-full rounded-xl bg-theme-surface border border-theme-outline px-3 py-3"
+                            >
+                                @include('native.partials.comparable-row', ['comparable' => $comparable, 'typeClass' => $typeClass])
+                            </pressable>
+                        @else
+                            <column ref="source-{{ $index }}" class="w-full rounded-xl bg-theme-surface border border-theme-outline px-3 py-3">
+                                @include('native.partials.comparable-row', ['comparable' => $comparable, 'typeClass' => $typeClass])
+                            </column>
+                        @endif
                     @endforeach
                 </column>
             @endif

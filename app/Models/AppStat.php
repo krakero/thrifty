@@ -59,7 +59,7 @@ class AppStat extends Model
             'items_identified' => DB::raw('items_identified + '.$items),
             'searches_performed' => DB::raw('searches_performed + '.$searches),
             'model_calls' => DB::raw('model_calls + '.$modelCalls),
-            'last_updated' => now(),
+            'last_updated' => now()->format('Y-m-d H:i:s.v'),
         ]);
     }
 }

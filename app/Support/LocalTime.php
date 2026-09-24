@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use Carbon\CarbonInterface;
+use DateTimeZone;
 use Thrifty\Camera\Facades\ThriftyCamera;
 use Throwable;
 
@@ -24,9 +25,22 @@ class LocalTime
         return $moment->setTimezone(self::timezone())->format($format);
     }
 
+    /**
+     * The device timezone, cached once detected. A failed detection is not cached, so it is retried next time.
+     */
     public static function timezone(): string
     {
-        return self::$timezone ??= self::detectTimezone();
+        if (self::$timezone !== null) {
+            return self::$timezone;
+        }
+
+        $detected = self::detectTimezone();
+
+        if ($detected !== null) {
+            self::$timezone = $detected;
+        }
+
+        return $detected ?? config('app.timezone');
     }
 
     /**
@@ -37,7 +51,7 @@ class LocalTime
         self::$timezone = $timezone;
     }
 
-    private static function detectTimezone(): string
+    private static function detectTimezone(): ?string
     {
         try {
             $timezone = ThriftyCamera::deviceTimezone();
@@ -45,10 +59,10 @@ class LocalTime
             $timezone = null;
         }
 
-        if (is_string($timezone) && in_array($timezone, timezone_identifiers_list(), true)) {
+        if (is_string($timezone) && in_array($timezone, DateTimeZone::listIdentifiers(DateTimeZone::ALL_WITH_BC), true)) {
             return $timezone;
         }
 
-        return config('app.timezone');
+        return null;
     }
 }

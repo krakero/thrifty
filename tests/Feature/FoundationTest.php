@@ -8,6 +8,7 @@ use App\Services\AppSettings;
 use App\Support\LocalTime;
 use App\Support\Money;
 use Carbon\CarbonImmutable;
+use Thrifty\Camera\Facades\ThriftyCamera;
 
 it('seeds the singleton stats row and accumulates run counts', function () {
     AppStat::record(frames: 1, items: 2, searches: 3, modelCalls: 4);
@@ -72,4 +73,16 @@ it('shows stored timestamps in the device timezone', function () {
     LocalTime::useTimezone(null);
 
     expect(LocalTime::timezone())->toBe(config('app.timezone'));
+});
+
+it('accepts backward-compatible timezone names and retries failed detection', function () {
+    LocalTime::useTimezone(null);
+    ThriftyCamera::shouldReceive('deviceTimezone')->once()->andReturn(null);
+    ThriftyCamera::shouldReceive('deviceTimezone')->once()->andReturn('Asia/Calcutta');
+
+    expect(LocalTime::timezone())->toBe(config('app.timezone'))
+        ->and(LocalTime::timezone())->toBe('Asia/Calcutta')
+        ->and(LocalTime::timezone())->toBe('Asia/Calcutta');
+
+    LocalTime::useTimezone(null);
 });

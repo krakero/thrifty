@@ -35,6 +35,7 @@
         }
     ],
     "android": {
+        "min_version": 26,
         "permissions": [],
         "dependencies": {
             "implementation": []

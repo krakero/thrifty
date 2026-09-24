@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\View;
+use Native\Mobile\Attributes\On;
 use Native\Mobile\Edge\CallbackRegistry;
 use Native\Mobile\Edge\NativeComponent;
 use Native\Mobile\Testing\Native;
@@ -19,6 +20,23 @@ class ThriftyCameraFixtureScreen extends NativeComponent
     public string $facing = 'back';
 
     public string $framesDirectory = '/data/storage/app/private/frames';
+
+    /** @var list<array<string, mixed>> */
+    public array $frames = [];
+
+    public ?string $failure = null;
+
+    #[On(FrameCaptured::class)]
+    public function frameCaptured(string $path, string $source, int $width, int $height, string $capturedAt, ?float $videoSeconds = null): void
+    {
+        $this->frames[] = compact('path', 'source', 'width', 'height', 'capturedAt', 'videoSeconds');
+    }
+
+    #[On(CameraFailed::class)]
+    public function cameraFailed(string $message): void
+    {
+        $this->failure = $message;
+    }
 
     public function toggle(): void
     {
@@ -139,4 +157,20 @@ it('passes facing off through to the renderer', function () {
     Native::test(ThriftyCameraFixtureScreen::class)
         ->set('facing', 'off')
         ->assertElement('thrifty_camera', fn (array $node) => $node['props']['facing'] === 'off');
+});
+
+it('delivers native frame payloads to on handlers by parameter name', function () {
+    Native::test(ThriftyCameraFixtureScreen::class)
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/live.jpg', 'source' => 'live', 'width' => 720, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z',
+        ])
+        ->emitNative(FrameCaptured::class, [
+            'path' => '/frames/video.jpg', 'source' => 'video', 'width' => 1280, 'height' => 720, 'capturedAt' => '2026-09-23T10:00:01.000Z', 'videoSeconds' => 4.5,
+        ])
+        ->emitNative(CameraFailed::class, ['message' => 'Camera access is off.'])
+        ->assertSet('frames', [
+            ['path' => '/frames/live.jpg', 'source' => 'live', 'width' => 720, 'height' => 1280, 'capturedAt' => '2026-09-23T10:00:00.000Z', 'videoSeconds' => null],
+            ['path' => '/frames/video.jpg', 'source' => 'video', 'width' => 1280, 'height' => 720, 'capturedAt' => '2026-09-23T10:00:01.000Z', 'videoSeconds' => 4.5],
+        ])
+        ->assertSet('failure', 'Camera access is off.');
 });

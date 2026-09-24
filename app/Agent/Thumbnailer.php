@@ -24,7 +24,7 @@ class Thumbnailer
             return null;
         }
 
-        $frame = @imagecreatefromstring($frameBytes);
+        $frame = getimagesizefromstring($frameBytes) !== false ? imagecreatefromstring($frameBytes) : false;
 
         if ($frame === false) {
             return null;

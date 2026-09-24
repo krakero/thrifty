@@ -7,6 +7,7 @@ use App\Models\Item;
 use App\Queries\HistoryQuery;
 use App\Queries\HistoryQueryException;
 use App\Scanning\FrameResults;
+use App\Scanning\LiveScanState;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\View\View;
 use Native\Mobile\Attributes\On;
@@ -52,8 +53,9 @@ class History extends NativeComponent
     }
 
     /**
-     * A frame finished analysing while History is showing (the Scan tab dispatches it as a shared event), so pick up its
-     * finds straight away, like the web app refreshing history after every frame.
+     * A frame finished analysing while History is showing (Scan dispatches it as a shared event). Settle it for the live
+     * scan like any screen on top of Scan (feed, chime, shared error), then pick up its finds straight away, like the web
+     * app refreshing history after every frame.
      *
      * @param  array<string, mixed>|null  $result
      */
@@ -65,6 +67,14 @@ class History extends NativeComponent
         if ($status === 'finished' && is_array($result) && ($result['itemIds'] ?? []) !== []) {
             $this->reload(keepLoaded: true);
         }
+    }
+
+    /**
+     * The scan error is shared with the Scan tab, like the web app's single error state.
+     */
+    public function dismissScanError(): void
+    {
+        app(LiveScanState::class)->clearError();
     }
 
     public function updatedSearch(): void
@@ -107,9 +117,14 @@ class History extends NativeComponent
 
     public function render(): View
     {
+        $scan = app(LiveScanState::class);
+        $scan->clearResolvedKeyError();
+
         return view('native.history', [
             'items' => $this->loadedItems(),
             'stats' => AppStat::current(),
+            'scanError' => $scan->error,
+            'scanErrorNeedsApiKey' => $scan->errorNeedsApiKey,
         ]);
     }
 

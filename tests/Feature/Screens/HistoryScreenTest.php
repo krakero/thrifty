@@ -164,3 +164,41 @@ it('settles scan analyses that finish while History is showing', function () {
 
     expect($state->pending)->toBe([]);
 });
+
+it('shows compact stats with the full numbers for VoiceOver', function () {
+    AppStat::current()->update(['frames_processed' => 1_234_567, 'items_identified' => 131, 'searches_performed' => 48_213, 'model_calls' => 7_500]);
+
+    Native::test(History::class)
+        ->assertSee('1.2M')
+        ->assertSee('131')
+        ->assertSee('48k')
+        ->assertSee('7.5k')
+        ->assertElement('row', fn (array $node) => ($node['ref'] ?? null) === 'history-stats'
+            && str_contains($node['props']['a11y_label'] ?? '', '1,234,567 frames'));
+});
+
+it('shows the shared scan error and offers settings for key errors', function () {
+    $scan = app(LiveScanState::class);
+    $scan->fail('Add your OpenAI API key in Settings to start scanning.', true);
+
+    Native::test(History::class)
+        ->assertSee('Add your OpenAI API key in Settings to start scanning.')
+        ->tap('scan-error-settings')
+        ->assertNavigatedTo('/settings');
+
+    Native::test(History::class)
+        ->tap('dismiss-scan-error')
+        ->assertDontSee('Add your OpenAI API key');
+
+    expect($scan->error)->toBeNull();
+});
+
+it('keeps every History control at least 44pt', function () {
+    AppStat::current();
+    $screen = Native::test(History::class)->set('search', 'x')->set('error', 'Boom');
+
+    foreach (['refresh-history', 'open-settings', 'clear-search', 'dismiss-error'] as $ref) {
+        $screen->assertElement('pressable', fn (array $node) => ($node['ref'] ?? null) === $ref
+            && ($node['layout']['width'] ?? 0) >= 44 && ($node['layout']['height'] ?? 0) >= 44);
+    }
+});

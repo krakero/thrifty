@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Storage;
  * A detected sellable item, deduplicated across frames and sessions by fingerprint.
  *
  * Bounding box coordinates are normalized 0-1000 relative to the full frame at `frameRun->frame_path`.
- * `thumbnail_path` is usually a padded crop of that box (`thumbs/{id}.jpg`), so never draw the box over it.
+ * `thumbnail_path` is usually a padded crop of that box (`thumbs/{frameRunId}-{n}.jpg`), so never draw the box over it.
  */
 class Item extends Model
 {
@@ -23,6 +23,11 @@ class Item extends Model
     use HasFactory, HasUlids;
 
     public $timestamps = false;
+
+    /**
+     * Millisecond precision, like the web app's ISO timestamps, so finds from the same second keep their order.
+     */
+    protected $dateFormat = 'Y-m-d H:i:s.v';
 
     /** @var list<string> */
     protected $fillable = [

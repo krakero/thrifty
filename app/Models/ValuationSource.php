@@ -19,6 +19,11 @@ class ValuationSource extends Model
 
     public $timestamps = false;
 
+    /**
+     * Millisecond precision, like the web app's ISO timestamps, so finds from the same second keep their order.
+     */
+    protected $dateFormat = 'Y-m-d H:i:s.v';
+
     /** @var list<string> */
     protected $fillable = ['item_id', 'source_type', 'title', 'url', 'price_cents', 'currency', 'captured_at'];
 

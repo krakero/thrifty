@@ -1,6 +1,7 @@
 @use('App\Icons\Ios')
 @use('App\Icons\Android')
 @use('App\Support\Money')
+@use('Illuminate\Support\Str')
 
 <scroll-view class="w-full h-full bg-theme-background">
     <column class="w-full gap-6 px-4 pt-4 pb-10">
@@ -17,7 +18,7 @@
             <text font="display" class="text-lg text-theme-on-background">Find criteria</text>
             <outlined-text-input
                 ref="find-criteria"
-                native:model="findCriteria"
+                native:model.debounce.400ms="findCriteria"
                 placeholder="Vintage band tees worth more than $40"
                 :multiline="true"
                 :min-lines="3"
@@ -26,6 +27,7 @@
                 a11y-label="Find criteria"
                 class="w-full"
             />
+            <text ref="criteria-count" font="mono" class="self-end text-xs {{ mb_strlen($findCriteria) >= 1000 ? 'text-theme-primary' : 'text-theme-on-surface-variant' }}">{{ number_format(mb_strlen($findCriteria)) }}/1,000</text>
             <row class="w-full gap-2 flex-wrap">
                 @foreach ($presets as $index => $preset)
                     <chip
@@ -53,7 +55,7 @@
                 :min="1"
                 :max="$maxConcurrentLimit"
                 :step="1"
-                a11y-label="Concurrent processing"
+                a11y-label="Concurrent processing: {{ $maxConcurrentFrames }} at a time"
                 class="w-full"
             />
             <row class="w-full">
@@ -75,7 +77,7 @@
                 :min="1"
                 :max="30"
                 :step="1"
-                a11y-label="Live scan frequency"
+                a11y-label="Live scan frequency: every {{ $scanIntervalSeconds }} {{ Str::plural('second', $scanIntervalSeconds) }}"
                 class="w-full"
             />
             <row class="w-full">
@@ -89,12 +91,11 @@
             <text font="display" class="text-lg text-theme-on-background">API keys</text>
             <outlined-text-input
                 ref="openai-key"
-                native:model="openAiApiKey"
+                native:model.debounce.400ms="openAiApiKey"
                 label="OpenAI API key"
                 placeholder="sk-..."
                 :secure="true"
                 supporting="Stored encrypted on this device. Frames go straight from your phone to OpenAI."
-                a11y-label="OpenAI API key"
                 class="w-full"
             />
             <button
@@ -112,17 +113,15 @@
             <text class="text-sm text-theme-on-surface-variant mt-2">eBay (optional). Add a client ID and secret to compare against active eBay listings.</text>
             <outlined-text-input
                 ref="ebay-client-id"
-                native:model="ebayClientId"
+                native:model.debounce.400ms="ebayClientId"
                 label="eBay client ID"
-                a11y-label="eBay client ID"
                 class="w-full"
             />
             <outlined-text-input
                 ref="ebay-client-secret"
-                native:model="ebayClientSecret"
+                native:model.debounce.400ms="ebayClientSecret"
                 label="eBay client secret"
                 :secure="true"
-                a11y-label="eBay client secret"
                 class="w-full"
             />
         </column>
@@ -155,7 +154,7 @@
             @endforelse
 
             @if ($hasMoreFinds)
-                <button ref="load-more" variant="secondary" label="Load more finds" @press="loadMoreFinds" class="w-full" />
+                <button ref="load-more" variant="secondary" label="Load more finds" @press="loadMoreFinds" class="w-full min-h-[44]" />
             @endif
 
             <button
@@ -164,7 +163,7 @@
                 label="Delete all finds"
                 :disabled="$savedFinds->isEmpty()"
                 @press="confirmDeleteAll"
-                class="w-full mt-2"
+                class="w-full mt-2 min-h-[44]"
             />
             <text class="text-xs text-theme-on-surface-variant text-center">Processing stats are kept.</text>
         </column>

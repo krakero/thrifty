@@ -102,7 +102,7 @@ it('confirms before deleting all finds', function () {
     expect(Item::count())->toBe(3);
 
     $component->emitNative(ButtonPressed::class, ['index' => 1, 'label' => 'Delete all', 'id' => Settings::DeleteAllAlertId])
-        ->assertSee('No saved finds.');
+        ->assertWentBack();
     expect(Item::count())->toBe(0);
 });
 
@@ -141,4 +141,36 @@ it('keeps typed api keys when leaving without blurring', function () {
 
 it('explains the parallel analysis limit', function () {
     Native::test(Settings::class)->assertSee('runs at most '.AppSettings::MaxConcurrentFramesLimit.' analyses in parallel');
+});
+
+it('pushes the 1000 character cap back into the field and shows a counter', function () {
+    Native::test(Settings::class)
+        ->input('find-criteria', str_repeat('a', 1063))
+        ->assertSet('findCriteria', str_repeat('a', 1000))
+        ->assertSee('1,000/1,000');
+});
+
+it('does not rewrite the criteria while the user is typing', function () {
+    $component = Native::test(Settings::class)->input('find-criteria', 'Mid century lamps ');
+
+    $component->assertSet('findCriteria', 'Mid century lamps ')->assertSee('18/1,000');
+    expect(app(AppSettings::class)->get(AppSettings::FindCriteria))->toBe('Mid century lamps ');
+});
+
+it('ignores a second delete tap that lands on the next row', function () {
+    [$first, $second] = Item::factory()->count(2)->create();
+
+    $component = Native::test(Settings::class)->tap('delete-'.$first->id);
+    $component->tap('delete-'.$second->id);
+
+    expect(Item::count())->toBe(1);
+
+    $this->travel(1)->seconds();
+    $component->instance()->deleteFind($second->id);
+
+    expect(Item::count())->toBe(0);
+});
+
+it('debounces the text inputs', function () {
+    Native::test(Settings::class)->assertElement('outlined_text_input', fn (array $node) => ($node['props']['sync_mode'] ?? null) === 'debounce');
 });

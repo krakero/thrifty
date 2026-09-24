@@ -29,6 +29,10 @@ class Settings extends NativeComponent
 
     public const OpenAiKeysUrl = 'https://platform.openai.com/api-keys';
 
+    public const DeleteCooldownSeconds = 0.6;
+
+    private float $lastDeleteAt = 0.0;
+
     public string $findCriteria = '';
 
     public int $maxConcurrentFrames = AppSettings::DefaultMaxConcurrentFrames;
@@ -125,8 +129,19 @@ class Settings extends NativeComponent
         Browser::inApp(self::OpenAiKeysUrl);
     }
 
+    /**
+     * The next row slides under a quick second tap, so deletes are ignored briefly after one lands (the web
+     * disables every delete button while one is in flight).
+     */
     public function deleteFind(string $itemId): void
     {
+        $now = now()->getTimestampMs() / 1000;
+
+        if ($now - $this->lastDeleteAt < self::DeleteCooldownSeconds) {
+            return;
+        }
+
+        $this->lastDeleteAt = $now;
         $item = Item::query()->find($itemId);
 
         if ($item === null) {
@@ -159,11 +174,14 @@ class Settings extends NativeComponent
 
         try {
             app(DeleteItems::class)->all();
-            $this->error = null;
-            $this->savedFindsLimit = self::SavedFindsPageSize;
         } catch (\Throwable) {
             $this->error = 'Could not delete all finds.';
+
+            return;
         }
+
+        // The web closes its settings dialog after deleting everything.
+        $this->back();
     }
 
     public function loadMoreFinds(): void
@@ -198,9 +216,19 @@ class Settings extends NativeComponent
         return Item::query()->latestSeen()->limit($this->savedFindsLimit + 1)->get();
     }
 
+    /**
+     * Save the criteria, capped at the web's 1000 characters. The property is only written back when the cap cut
+     * something off: that pushes the shortened text into the field (its own limit doesn't hold for multi-line
+     * input on iOS), while an unchanged value is never echoed back into a field the user is typing in.
+     */
     private function updateFindCriteria(string $value): void
     {
-        $this->findCriteria = mb_substr($value, 0, self::FindCriteriaMaxLength);
-        app(AppSettings::class)->set(AppSettings::FindCriteria, $this->findCriteria);
+        $capped = mb_substr($value, 0, self::FindCriteriaMaxLength);
+
+        if ($capped !== $value || $this->findCriteria !== $value) {
+            $this->findCriteria = $capped;
+        }
+
+        app(AppSettings::class)->set(AppSettings::FindCriteria, $capped);
     }
 }

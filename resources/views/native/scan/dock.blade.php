@@ -4,7 +4,7 @@
     Scan actions, docked above the tab bar (the web app's bottom-nav dock). Native buttons, so VoiceOver gets
     labelled buttons with the button trait; `pressable` rows are invisible to it on iOS.
 --}}
-<row class="w-full items-center justify-center gap-3 px-4 pt-2 pb-3">
+<row native:key="scan-dock" class="w-full items-center justify-center gap-3 px-4 pt-2 pb-3">
     @if ($state->scanning || $cameraStarting)
         <button
             ref="toggle-live"

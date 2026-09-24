@@ -5,10 +5,11 @@
 <stack class="w-full h-full bg-theme-background">
     {{-- Camera stage --}}
     @if ($state->facing === 'off')
-        <thrifty-camera ref="camera" :scanning="false" :interval="$scanIntervalSeconds" facing="off" frames-directory="{{ $framesDirectory }}" class="w-full h-full" />
+        <thrifty-camera ref="camera" native:key="scan-camera" :scanning="false" :interval="$scanIntervalSeconds" facing="off" frames-directory="{{ $framesDirectory }}" class="w-full h-full" />
     @else
         <thrifty-camera
             ref="camera"
+            native:key="scan-camera"
             :scanning="$state->scanning && $state->cameraRunning && $state->source === ScanSource::Camera->value"
             :interval="$scanIntervalSeconds"
             facing="{{ $state->facing }}"
@@ -38,8 +39,11 @@
 
     @include('native.scan.flash')
 
-    {{-- Overlay --}}
-    <column class="w-full h-full">
+    {{--
+        Overlay. Keyed so its nodes keep their ids while the stage above changes (a new still, the flash): an id
+        change rebuilds the native view, which closes an open camera menu.
+    --}}
+    <column native:key="scan-overlay" class="w-full h-full">
         @include('native.scan.top-bar')
 
         <column class="w-full flex-1 px-4 gap-3">
@@ -61,7 +65,9 @@
             <scroll-view class="w-full flex-1">
                 <column class="w-full gap-2 pb-2">
                     @foreach ($liveItems as $item)
-                        @include('native.partials.item-card', ['item' => $item, 'from' => 'scan'])
+                        <column native:key="find-{{ $item->id }}" class="w-full">
+                            @include('native.partials.item-card', ['item' => $item, 'from' => 'scan'])
+                        </column>
                     @endforeach
                 </column>
             </scroll-view>

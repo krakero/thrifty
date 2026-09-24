@@ -36,13 +36,13 @@ it('persists find criteria, truncated to 1000 characters', function () {
 
 it('applies and clears presets', function () {
     $component = Native::test(Settings::class)
-        ->fireEvent('preset-2', 2, ['value' => 1.0])
+        ->tap('preset-2')
         ->assertSet('findCriteria', AppSettings::FindCriteriaPresets[2]['value'])
         ->assertSee('Clear');
 
     expect(app(AppSettings::class)->findCriteria())->toBe(AppSettings::FindCriteriaPresets[2]['value']);
 
-    $component->fireEvent('clear-criteria', 2, ['value' => 1.0])->assertSet('findCriteria', '');
+    $component->tap('clear-criteria')->assertSet('findCriteria', '');
 
     expect(app(AppSettings::class)->get(AppSettings::FindCriteria))->toBeNull();
 });
@@ -173,4 +173,12 @@ it('ignores a second delete tap that lands on the next row', function () {
 
 it('debounces the text inputs', function () {
     Native::test(Settings::class)->assertElement('outlined_text_input', fn (array $node) => ($node['props']['sync_mode'] ?? null) === 'debounce');
+});
+
+it('keeps the active preset selected when it is tapped again', function () {
+    $component = Native::test(Settings::class)->tap('preset-0')->tap('preset-0');
+
+    $component->assertSet('findCriteria', AppSettings::FindCriteriaPresets[0]['value'])
+        ->assertElement('thrifty_pressable', fn (array $node) => ($node['ref'] ?? null) === 'preset-0'
+            && str_ends_with($node['props']['a11y_label'] ?? '', ', selected'));
 });

@@ -899,6 +899,31 @@ it('ends sessions with millisecond precision', function () {
     expect(ScanSession::sole()->ended_at->format('v'))->toBe('123');
 });
 
+it('keeps the camera menu node stable while the stage changes under it', function () {
+    $component = pickMedia(Native::test(Scan::class), pickedTempFile('mov'), 'video');
+    $menu = function () use ($component): array {
+        $found = null;
+        $walk = function (array $node) use (&$walk, &$found): void {
+            if (($node['ref'] ?? null) === 'camera-select') {
+                $found = $node;
+            }
+            foreach ($node['children'] ?? [] as $child) {
+                $walk($child);
+            }
+        };
+        $walk($component->tree());
+
+        return $found;
+    };
+    $before = $menu();
+
+    captureFrame($component, 'video', 'v1.jpg', scanState()->videoRunId);
+    $after = $menu();
+
+    expect(scanState()->stillPreviewPath)->not->toBeNull()
+        ->and($after)->toBe($before);
+});
+
 it('ignores results for analyses it is not waiting on', function () {
     Native::test(Scan::class)
         ->emitNative(Scan::FrameAnalyzedEvent, ['id' => 'unknown', 'status' => 'finished', 'result' => ['itemIds' => ['x']]])

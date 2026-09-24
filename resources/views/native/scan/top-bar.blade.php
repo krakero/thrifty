@@ -14,10 +14,11 @@
         ->press($method);
 @endphp
 
-<row class="w-full items-center gap-2 px-4 pt-3 pb-2">
+<row native:key="scan-top-bar" class="w-full items-center gap-2 px-4 pt-3 pb-2">
     {{-- A real button (not a pressable) so VoiceOver gets a labelled button; the menu marks the current camera. --}}
     <button
         ref="camera-select"
+        native:key="camera-select"
         variant="secondary"
         size="sm"
         class="glass"

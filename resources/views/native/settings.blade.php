@@ -28,19 +28,44 @@
                 class="w-full"
             />
             <text ref="criteria-count" font="mono" class="self-end text-xs {{ mb_strlen($findCriteria) >= 1000 ? 'text-theme-primary' : 'text-theme-on-surface-variant' }}">{{ number_format(mb_strlen($findCriteria)) }}/1,000</text>
-            <row class="w-full gap-2 flex-wrap">
-                @foreach ($presets as $index => $preset)
-                    <chip
-                        ref="preset-{{ $index }}"
-                        label="{{ $preset['label'] }}"
-                        :selected="$findCriteria === $preset['value']"
-                        @change="applyPreset({{ $index }})"
-                    />
+            {{--
+                Preset pills, two per row: iOS flex rows shrink children rather than wrapping them, so the rows are
+                explicit, and each scrolls sideways instead of squeezing labels at very large text sizes. Selection
+                is drawn from the saved criteria alone, so tapping the active preset keeps it selected.
+            --}}
+            @php($presetRows = collect($presets)->map(fn ($preset, $index) => $preset + ['index' => $index])->chunk(2)->values())
+            <column class="w-full gap-2">
+                @foreach ($presetRows as $rowIndex => $row)
+                    <scroll-view horizontal native:key="preset-row-{{ $rowIndex }}" class="w-full">
+                        <row class="gap-2">
+                            @foreach ($row as $preset)
+                                @php($active = $findCriteria === $preset['value'])
+                                <thrifty-pressable
+                                    ref="preset-{{ $preset['index'] }}"
+                                    @press="applyPreset({{ $preset['index'] }})"
+                                    :press-scale="0.96"
+                                    a11y-label="{{ $preset['label'] }} preset{{ $active ? ', selected' : '' }}"
+                                    a11y-hint="Fills in the find criteria"
+                                    class="shrink-0 min-h-[44] justify-center rounded-full px-4 {{ $active ? 'bg-theme-primary' : 'bg-theme-surface-variant border border-theme-outline' }}"
+                                >
+                                    <text font="semibold" :max-lines="1" class="text-sm {{ $active ? 'text-theme-on-primary' : 'text-theme-on-surface' }}">{{ $preset['label'] }}</text>
+                                </thrifty-pressable>
+                            @endforeach
+                            @if ($loop->last && $findCriteria !== '')
+                                <thrifty-pressable
+                                    ref="clear-criteria"
+                                    @press="clearFindCriteria"
+                                    :press-scale="0.96"
+                                    a11y-label="Clear find criteria"
+                                    class="shrink-0 min-h-[44] justify-center rounded-full px-4 border border-theme-outline"
+                                >
+                                    <text font="semibold" :max-lines="1" class="text-sm text-theme-on-surface-variant">Clear</text>
+                                </thrifty-pressable>
+                            @endif
+                        </row>
+                    </scroll-view>
                 @endforeach
-                @if ($findCriteria !== '')
-                    <chip ref="clear-criteria" label="Clear" :selected="false" @change="clearFindCriteria" />
-                @endif
-            </row>
+            </column>
         </column>
 
         {{-- Concurrent processing --}}

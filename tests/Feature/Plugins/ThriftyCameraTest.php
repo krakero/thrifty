@@ -144,6 +144,27 @@ class ThriftyCameraScanStyleFixtureScreen extends NativeComponent
     }
 }
 
+class ThriftyPressableFixtureScreen extends NativeComponent
+{
+    /** @var list<string> */
+    public array $calls = [];
+
+    public function save(string $what = 'plain'): void
+    {
+        $this->calls[] = "save:{$what}";
+    }
+
+    public function hold(): void
+    {
+        $this->calls[] = 'hold';
+    }
+
+    public function render(): Illuminate\View\View
+    {
+        return view('thrifty-pressable-fixture');
+    }
+}
+
 beforeEach(function () {
     View::addLocation(__DIR__.'/views');
 
@@ -555,4 +576,72 @@ it('does not journal camera started', function () {
         ->emitNative(CameraStarted::class, ['facing' => 'back']);
 
     expect(File::exists($this->journalPath))->toBeFalse();
+});
+
+/**
+ * @return array<string, mixed>
+ */
+function thriftyNodeByRef(array $node, string $ref): ?array
+{
+    if (($node['ref'] ?? null) === $ref) {
+        return $node;
+    }
+
+    foreach ($node['children'] ?? [] as $child) {
+        if (($found = thriftyNodeByRef($child, $ref)) !== null) {
+            return $found;
+        }
+    }
+
+    return null;
+}
+
+it('serializes thrifty-pressable like a core pressable, with a11y and without node-level gestures', function () {
+    $screen = Native::test(ThriftyPressableFixtureScreen::class);
+    $tree = $screen->tree();
+    $core = thriftyNodeByRef($tree, 'core');
+    $thrifty = thriftyNodeByRef($tree, 'thrifty');
+
+    expect($core['type'])->toBe('pressable')
+        ->and($thrifty['type'])->toBe('thrifty_pressable')
+        ->and($thrifty['layout'] ?? null)->toBe($core['layout'] ?? null)
+        ->and($thrifty['style'] ?? null)->toBe($core['style'] ?? null)
+        ->and(array_column($thrifty['children'], 'type'))->toBe(array_column($core['children'], 'type'));
+
+    // Core: node-level press + vendor press-feedback props (the DragGesture path).
+    expect($core['on_press'] ?? 0)->toBeGreaterThan(0)
+        ->and($core['props'])->toHaveKey('press-scale');
+
+    // Thrifty: callbacks and feedback in its own props; no node-level gestures.
+    expect($thrifty['on_press'] ?? 0)->toBe(0)
+        ->and($thrifty['on_long_press'] ?? 0)->toBe(0)
+        ->and($thrifty['props'])->not->toHaveKeys(['press-scale', 'press-opacity'])
+        ->and($thrifty['props']['on_press'])->toBeInt()
+        ->and($thrifty['props']['on_long_press'])->toBeInt()
+        ->and($thrifty['props']['feedback_scale'])->toBe(0.97)
+        ->and($thrifty['props']['feedback_opacity'])->toBe(0.8)
+        ->and($thrifty['props']['a11y_label'])->toBe('Save draft')
+        ->and($thrifty['props']['a11y_hint'])->toBe('Saves the draft');
+});
+
+it('fires the same press and long press handlers as a core pressable', function () {
+    Native::test(ThriftyPressableFixtureScreen::class)
+        ->tap('core')
+        ->tap('thrifty')
+        ->longPress('thrifty')
+        ->assertSet('calls', ['save:draft', 'save:draft', 'hold']);
+});
+
+it('navigates with data from a thrifty-pressable', function () {
+    $screen = Native::test(ThriftyPressableFixtureScreen::class)->tap('find');
+
+    expect($screen->navigationIntent()?->uri ?? null)->toBe('/finds/42?from=history');
+});
+
+it('keeps the menu on a thrifty-pressable', function () {
+    $menu = thriftyNodeByRef(Native::test(ThriftyPressableFixtureScreen::class)->tree(), 'menu');
+
+    expect($menu['props']['has_menu'])->toBeTrue()
+        ->and(array_column($menu['children'], 'type'))->toContain('top_bar_action')
+        ->and($menu['props']['a11y_label'])->toBe('More');
 });

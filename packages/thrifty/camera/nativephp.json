@@ -10,6 +10,13 @@
             "blade": "Thrifty\\Camera\\Components\\ThriftyCameraView",
             "ios_renderer": "ThriftyCameraRenderer",
             "self_closing": true
+        },
+        {
+            "type": "thrifty_pressable",
+            "element": "Thrifty\\Camera\\Elements\\ThriftyPressable",
+            "blade": "Thrifty\\Camera\\Components\\ThriftyPressable",
+            "ios_renderer": "ThriftyPressableRenderer",
+            "self_closing": false
         }
     ],
     "bridge_functions": [
